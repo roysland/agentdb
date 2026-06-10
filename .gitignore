@@ -1,0 +1,17 @@
+.meetingroom
+agentdb
+agentdb.db
+agentdb.db-shm
+agentdb.db-wal
+CODE_REVIEW.md
+
+# AI Agent related files
+.antigravitycli
+.claude
+.kiro
+agents.md
+
+# Logs and temporary files
+*.log
+*.tmp
+*.bak
