@@ -482,6 +482,19 @@ func mcpTools() []map[string]any {
 		},
 	})
 
+	tools = append(tools, map[string]any{
+		"name":        "compare_capabilities",
+		"description": "Use when: checking feature-parity between two codebases (e.g., legacy vs. current). Returns implemented/partial/missing/extra capability groups by file-path domain. Requires: codebase_a_id (reference) and codebase_b_id (target). Only exposes symbol name, kind, and domain — no signatures.",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"codebase_a_id": map[string]any{"type": "integer", "description": "Reference codebase ID (e.g., legacy)"},
+				"codebase_b_id": map[string]any{"type": "integer", "description": "Target codebase ID to compare against the reference"},
+			},
+			"required": []string{"codebase_a_id", "codebase_b_id"},
+		},
+	})
+
 	if isExperimentalEnabled() {
 		tools = append(tools, map[string]any{
 			"name":        "resolve_code_query",
@@ -621,7 +634,7 @@ func redactSensitiveFieldsRecursive(value any) {
 	case map[string]any:
 		for key, child := range v {
 			switch key {
-			case "snippet", "doc_comment", "body_snippet":
+			case "snippet", "doc_comment", "body_snippet", "signature":
 				v[key] = ""
 			default:
 				redactSensitiveFieldsRecursive(child)
@@ -680,11 +693,12 @@ func loadCodebasePolicyMetadata(ctx context.Context, conn *sql.DB, codebaseID in
 }
 
 const (
-	mcpSearchSnippetLimit = 240
-	mcpDocCommentLimit    = 280
-	mcpSignatureLimit     = 160
-	mcpTruncationSuffix   = "\n... (truncated)"
-	mcpSingleLineSuffix   = " ... (truncated)"
+	mcpSearchSnippetLimit  = 240
+	mcpDocCommentLimit     = 280
+	mcpSignatureLimit      = 160
+	mcpDocContentLimit     = 4000
+	mcpTruncationSuffix    = "\n... (truncated)"
+	mcpSingleLineSuffix    = " ... (truncated)"
 )
 
 func compactMCPText(value string, maxLen int) string {
@@ -892,6 +906,11 @@ func handleMCPToolCall(ctx context.Context, rawParams json.RawMessage) (map[stri
 		rctx, cancel := mcpConnHandle.ReadContext(ctx)
 		defer cancel()
 		return mcpCodebaseContext(rctx, conn, req.Arguments)
+
+	case "compare_capabilities":
+		rctx, cancel := mcpConnHandle.ReadContext(ctx)
+		defer cancel()
+		return mcpCompareCapabilities(rctx, conn, req.Arguments)
 
 	default:
 		return nil, fmt.Errorf("unknown tool %q", req.Name)
@@ -2183,7 +2202,7 @@ func mcpFindSymbol(ctx context.Context, conn *sql.DB, args map[string]any) (map[
 			if s.DocComment != "" {
 				item["doc_comment"] = s.DocComment
 			}
-			results = append(results, item)
+			results = append(results, compactMCPSearchHit(item))
 		}
 
 		// Annotate results from degraded files per codebase.
@@ -2232,7 +2251,7 @@ func mcpFindSymbol(ctx context.Context, conn *sql.DB, args map[string]any) (map[
 		if s.DocComment != "" {
 			item["doc_comment"] = s.DocComment
 		}
-		results = append(results, item)
+		results = append(results, compactMCPSearchHit(item))
 	}
 	annotateDegradedHits(ctx, conn, codebaseID, results)
 
@@ -2318,7 +2337,30 @@ func mcpGetFileSymbols(ctx context.Context, conn *sql.DB, args map[string]any) (
 		return nil, err
 	}
 
-	result := map[string]any{"file_path": filePath, "symbols": symbols, "count": len(symbols)}
+	compacted := make([]map[string]any, 0, len(symbols))
+	for _, s := range symbols {
+		item := map[string]any{
+			"name":           s.Name,
+			"qualified_name": s.QualifiedName,
+			"kind":           s.Kind,
+			"language":       s.Language,
+			"signature":      s.Signature,
+			"start_line":     s.StartLine,
+			"end_line":       s.EndLine,
+		}
+		if s.Receiver != "" {
+			item["receiver"] = s.Receiver
+		}
+		if s.DocComment != "" {
+			item["doc_comment"] = s.DocComment
+		}
+		if s.Visibility != "" {
+			item["visibility"] = s.Visibility
+		}
+		compacted = append(compacted, compactMCPSearchHit(item))
+	}
+
+	result := map[string]any{"file_path": filePath, "symbols": compacted, "count": len(compacted)}
 
 	// Check if this file has degraded index status.
 	indexedFileRepo := store.NewIndexedFileRepo(conn)
@@ -2473,14 +2515,14 @@ func mcpProjectOverview(ctx context.Context, conn *sql.DB, args map[string]any) 
 	// Summarize entry points (signature + location only)
 	epSummary := make([]map[string]any, 0, len(entryPoints))
 	for _, ep := range entryPoints {
-		epSummary = append(epSummary, map[string]any{
+		epSummary = append(epSummary, compactMCPSearchHit(map[string]any{
 			"name":        ep.QualifiedName,
 			"kind":        ep.Kind,
 			"signature":   ep.Signature,
 			"file_path":   ep.FilePath,
 			"start_line":  ep.StartLine,
 			"doc_comment": ep.DocComment,
-		})
+		}))
 	}
 
 	return mcpToolTextResult(map[string]any{
@@ -2800,6 +2842,28 @@ func mcpCodebaseContext(ctx context.Context, conn *sql.DB, args map[string]any) 
 		return nil, fmt.Errorf("retrieve orientation docs: %w", err)
 	}
 
+	// Proprietary-artifact mode: when the codebase is marked closed_source, suppress
+	// doc types that can reveal internal design (architecture, design, todo, feature-list).
+	// Only safe navigational/usage docs (readme, contributing, agent-instructions) are kept.
+	if len(codebaseIDs) > 0 {
+		if policy, ok := loadCodebasePolicyMetadata(ctx, conn, codebaseIDs[0]); ok {
+			if closedSource, _ := policy["closed_source"].(bool); closedSource {
+				safeTypes := map[orient.DocType]bool{
+					orient.DocTypeReadme:            true,
+					orient.DocTypeContributing:      true,
+					orient.DocTypeAgentInstructions: true,
+				}
+				filtered := docs[:0]
+				for _, doc := range docs {
+					if safeTypes[doc.DocType] {
+						filtered = append(filtered, doc)
+					}
+				}
+				docs = filtered
+			}
+		}
+	}
+
 	// Fallback: when no orientation docs found, call mcpProjectOverview and wrap with "fallback": true.
 	if len(docs) == 0 {
 		// Use the first codebase_id for the project overview fallback.
@@ -2825,7 +2889,7 @@ func mcpCodebaseContext(ctx context.Context, conn *sql.DB, args map[string]any) 
 	for _, doc := range docs {
 		docResults = append(docResults, map[string]any{
 			"file_path": doc.FilePath,
-			"content":   doc.Content,
+			"content":   compactMCPText(doc.Content, mcpDocContentLimit),
 			"doc_type":  string(doc.DocType),
 		})
 	}
@@ -3012,6 +3076,139 @@ func readMCPPayload(r *bufio.Reader) ([]byte, error) {
 		}
 		return []byte(trimmed), nil
 	}
+}
+
+func mcpCompareCapabilities(ctx context.Context, conn *sql.DB, args map[string]any) (map[string]any, error) {
+	aID := toInt64(args["codebase_a_id"], 0)
+	bID := toInt64(args["codebase_b_id"], 0)
+	if aID <= 0 || bID <= 0 {
+		return nil, errors.New("codebase_a_id and codebase_b_id are required")
+	}
+	if aID == bID {
+		return nil, errors.New("codebase_a_id and codebase_b_id must be different")
+	}
+
+	repo := store.NewSymbolRepo(conn)
+	aSymbols, err := repo.ListCapabilities(ctx, aID)
+	if err != nil {
+		return nil, fmt.Errorf("load codebase_a symbols: %w", err)
+	}
+	bSymbols, err := repo.ListCapabilities(ctx, bID)
+	if err != nil {
+		return nil, fmt.Errorf("load codebase_b symbols: %w", err)
+	}
+
+	// capKey uniquely identifies a symbol across codebases.
+	type capKey struct{ name, kind string }
+
+	// Group symbols by domain (first path segment).
+	domain := func(filePath string) string {
+		if i := strings.Index(filePath, "/"); i > 0 {
+			return filePath[:i+1]
+		}
+		return "(root)"
+	}
+
+	type domainEntry struct {
+		a map[capKey]struct{}
+		b map[capKey]struct{}
+	}
+	domains := map[string]*domainEntry{}
+
+	ensure := func(d string) *domainEntry {
+		if domains[d] == nil {
+			domains[d] = &domainEntry{
+				a: map[capKey]struct{}{},
+				b: map[capKey]struct{}{},
+			}
+		}
+		return domains[d]
+	}
+
+	for _, s := range aSymbols {
+		e := ensure(domain(s.FilePath))
+		e.a[capKey{s.Name, s.Kind}] = struct{}{}
+	}
+	for _, s := range bSymbols {
+		e := ensure(domain(s.FilePath))
+		e.b[capKey{s.Name, s.Kind}] = struct{}{}
+	}
+
+	type symbolRef struct {
+		Name string `json:"name"`
+		Kind string `json:"kind"`
+	}
+
+	type domainResult struct {
+		Domain   string      `json:"domain"`
+		Status   string      `json:"status"`
+		ACount   int         `json:"codebase_a_symbols"`
+		BCount   int         `json:"codebase_b_symbols"`
+		InBoth   int         `json:"in_both"`
+		OnlyInA  []symbolRef `json:"only_in_a"`
+		OnlyInB  []symbolRef `json:"only_in_b"`
+	}
+
+	summary := map[string]int{"implemented": 0, "partial": 0, "missing": 0, "extra": 0}
+
+	// Collect and sort domain names for stable output.
+	domainNames := make([]string, 0, len(domains))
+	for d := range domains {
+		domainNames = append(domainNames, d)
+	}
+	sort.Strings(domainNames)
+
+	results := make([]domainResult, 0, len(domainNames))
+	for _, d := range domainNames {
+		e := domains[d]
+
+		var onlyInA, onlyInB []symbolRef
+		inBoth := 0
+
+		for k := range e.a {
+			if _, ok := e.b[k]; ok {
+				inBoth++
+			} else {
+				onlyInA = append(onlyInA, symbolRef{k.name, k.kind})
+			}
+		}
+		for k := range e.b {
+			if _, ok := e.a[k]; !ok {
+				onlyInB = append(onlyInB, symbolRef{k.name, k.kind})
+			}
+		}
+
+		var status string
+		switch {
+		case len(e.a) == 0:
+			status = "extra" // domain only in B
+		case len(e.b) == 0:
+			status = "missing" // domain only in A
+		case inBoth*10 >= len(e.a)*7: // B has >= 70% of A's symbols
+			status = "implemented"
+		default:
+			status = "partial"
+		}
+		summary[status]++
+
+		results = append(results, domainResult{
+			Domain:  d,
+			Status:  status,
+			ACount:  len(e.a),
+			BCount:  len(e.b),
+			InBoth:  inBoth,
+			OnlyInA: onlyInA,
+			OnlyInB: onlyInB,
+		})
+	}
+
+	out := map[string]any{
+		"codebase_a_id": aID,
+		"codebase_b_id": bID,
+		"domains":       results,
+		"summary":       summary,
+	}
+	return mcpToolTextResult(out), nil
 }
 
 func writeMCPResponse(w io.Writer, resp mcpResponse) error {

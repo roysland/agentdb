@@ -2,18 +2,41 @@ package cmd
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/roysland/agentdb/internal/config"
 	"github.com/roysland/agentdb/internal/db"
 )
 
 func newBootstrapCmd(ctx context.Context) *cobra.Command {
-	return &cobra.Command{
+	var newDB bool
+
+	cmd := &cobra.Command{
 		Use:   "bootstrap",
 		Short: "Apply schema and ensure required tables exist",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			conn, err := db.Open(ctx, rootCfg)
+			resolved := config.Resolve(rootCfg)
+
+			if newDB {
+				dbPath := resolved.DatabaseURL
+				if strings.Contains(dbPath, "://") {
+					return fmt.Errorf("--new only works with local file databases, not %s", dbPath)
+				}
+				if _, err := os.Stat(dbPath); err == nil {
+					backupPath := fmt.Sprintf("%s.bak.%d", dbPath, time.Now().Unix())
+					if err := os.Rename(dbPath, backupPath); err != nil {
+						return fmt.Errorf("rename existing database: %w", err)
+					}
+					_, _ = fmt.Fprintf(os.Stderr, "agentdb: existing database backed up to %s\n", backupPath)
+				}
+			}
+
+			conn, err := db.Open(ctx, resolved)
 			if err != nil {
 				return err
 			}
@@ -31,4 +54,8 @@ func newBootstrapCmd(ctx context.Context) *cobra.Command {
 			})
 		},
 	}
+
+	cmd.Flags().BoolVar(&newDB, "new", false, "Rename the existing database to a timestamped backup and create a fresh one")
+
+	return cmd
 }

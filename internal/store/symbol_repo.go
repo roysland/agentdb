@@ -225,6 +225,41 @@ func (r *SymbolRepo) ListWithEmbeddings(ctx context.Context, codebaseID int64, l
 	return scanSymbols(rows)
 }
 
+// CapabilityEntry is a minimal symbol record for capability comparison.
+// It intentionally omits signature, doc_comment, and body_snippet.
+type CapabilityEntry struct {
+	Name     string `json:"name"`
+	Kind     string `json:"kind"`
+	FilePath string `json:"file_path"`
+}
+
+// ListCapabilities returns the name, kind, and file_path of every symbol in the
+// codebase. Signature and source fields are never included — the result is a
+// capability-presence indicator only.
+func (r *SymbolRepo) ListCapabilities(ctx context.Context, codebaseID int64) ([]CapabilityEntry, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT name, kind, file_path
+		FROM symbols
+		WHERE codebase_id = ?
+		ORDER BY file_path, kind, name`,
+		codebaseID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list capabilities: %w", err)
+	}
+	defer rows.Close()
+
+	var out []CapabilityEntry
+	for rows.Next() {
+		var e CapabilityEntry
+		if err := rows.Scan(&e.Name, &e.Kind, &e.FilePath); err != nil {
+			return nil, fmt.Errorf("scan capability: %w", err)
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 func scanSymbols(rows *sql.Rows) ([]Symbol, error) {
 	out := make([]Symbol, 0)
 	for rows.Next() {

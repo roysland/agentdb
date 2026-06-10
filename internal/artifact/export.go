@@ -77,21 +77,23 @@ func Export(ctx context.Context, srcDB *sql.DB, opts ExportOptions) error {
 		return fmt.Errorf("copy codebases: %w", err)
 	}
 
+	chunkSignatureSelect := "signature"
 	chunkSnippetSelect := "snippet"
 	if opts.StripSource {
+		chunkSignatureSelect = "''"
 		chunkSnippetSelect = "''"
 	}
 
-	// Copy chunks (conditionally include embeddings, and optionally strip snippet text).
+	// Copy chunks (conditionally include embeddings, and optionally strip snippet/signature text).
 	if opts.IncludeEmbeddings {
 		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
 			INSERT INTO artifact.chunks (codebase_id, file_path, chunk_key, language, kind, name,
 				signature, snippet, start_line, end_line, file_hash, indexed_at,
 				embedding, embedding_model, embedding_status)
 			SELECT codebase_id, file_path, chunk_key, language, kind, name,
-				signature, %s, start_line, end_line, file_hash, indexed_at,
+				%s, %s, start_line, end_line, file_hash, indexed_at,
 				embedding, embedding_model, embedding_status
-			FROM chunks WHERE codebase_id = ?`, chunkSnippetSelect), opts.CodebaseID); err != nil {
+			FROM chunks WHERE codebase_id = ?`, chunkSignatureSelect, chunkSnippetSelect), opts.CodebaseID); err != nil {
 			return fmt.Errorf("copy chunks: %w", err)
 		}
 	} else {
@@ -100,9 +102,9 @@ func Export(ctx context.Context, srcDB *sql.DB, opts ExportOptions) error {
 				signature, snippet, start_line, end_line, file_hash, indexed_at,
 				embedding, embedding_model, embedding_status)
 			SELECT codebase_id, file_path, chunk_key, language, kind, name,
-				signature, %s, start_line, end_line, file_hash, indexed_at,
+				%s, %s, start_line, end_line, file_hash, indexed_at,
 				NULL, '', embedding_status
-			FROM chunks WHERE codebase_id = ?`, chunkSnippetSelect), opts.CodebaseID); err != nil {
+			FROM chunks WHERE codebase_id = ?`, chunkSignatureSelect, chunkSnippetSelect), opts.CodebaseID); err != nil {
 			return fmt.Errorf("copy chunks: %w", err)
 		}
 	}
@@ -115,14 +117,16 @@ func Export(ctx context.Context, srcDB *sql.DB, opts ExportOptions) error {
 		return fmt.Errorf("copy indexed_files: %w", err)
 	}
 
+	symbolSignatureSelect := "signature"
 	symbolDocCommentSelect := "doc_comment"
 	symbolBodySnippetSelect := "body_snippet"
 	if opts.StripSource {
+		symbolSignatureSelect = "''"
 		symbolDocCommentSelect = "''"
 		symbolBodySnippetSelect = "''"
 	}
 
-	// Copy symbols (conditionally include embeddings, and optionally strip doc/body text).
+	// Copy symbols (conditionally include embeddings, and optionally strip signature/doc/body text).
 	if opts.IncludeEmbeddings {
 		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
 			INSERT INTO artifact.symbols (codebase_id, file_path, language, kind, name, qualified_name,
@@ -130,10 +134,10 @@ func Export(ctx context.Context, srcDB *sql.DB, opts ExportOptions) error {
 				start_line, end_line, file_hash, indexed_at,
 				embedding, embedding_model)
 			SELECT codebase_id, file_path, language, kind, name, qualified_name,
-				receiver, signature, %s, visibility, %s,
+				receiver, %s, %s, visibility, %s,
 				start_line, end_line, file_hash, indexed_at,
 				embedding, embedding_model
-			FROM symbols WHERE codebase_id = ?`, symbolDocCommentSelect, symbolBodySnippetSelect), opts.CodebaseID); err != nil {
+			FROM symbols WHERE codebase_id = ?`, symbolSignatureSelect, symbolDocCommentSelect, symbolBodySnippetSelect), opts.CodebaseID); err != nil {
 			return fmt.Errorf("copy symbols: %w", err)
 		}
 	} else {
@@ -143,10 +147,10 @@ func Export(ctx context.Context, srcDB *sql.DB, opts ExportOptions) error {
 				start_line, end_line, file_hash, indexed_at,
 				embedding, embedding_model)
 			SELECT codebase_id, file_path, language, kind, name, qualified_name,
-				receiver, signature, %s, visibility, %s,
+				receiver, %s, %s, visibility, %s,
 				start_line, end_line, file_hash, indexed_at,
 				NULL, ''
-			FROM symbols WHERE codebase_id = ?`, symbolDocCommentSelect, symbolBodySnippetSelect), opts.CodebaseID); err != nil {
+			FROM symbols WHERE codebase_id = ?`, symbolSignatureSelect, symbolDocCommentSelect, symbolBodySnippetSelect), opts.CodebaseID); err != nil {
 			return fmt.Errorf("copy symbols: %w", err)
 		}
 	}

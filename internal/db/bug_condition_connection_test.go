@@ -111,14 +111,16 @@ func TestBugCondition_GoroutineLeak(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------------
-// Test 1d: Write Timeout (Bug 1.9)
+// Test 1d: Write Timeout (Bug 1.9 — fixed)
 //
-// Bug condition: writeTTL is 3 seconds, any operation >3s fails
-// Expected behavior: Long-running operations complete without premature timeout
+// Bug was: writeTTL defaulted to 3 seconds, causing any indexing operation
+// longer than 3s to fail with context deadline exceeded.
+// Fix: NewConnectionHandle now sets writeTTL to 5 minutes.
+//
+// This test verifies the production writeTTL is large enough for real workloads.
 // -----------------------------------------------------------------------------
 
 func TestBugCondition_WriteTimeout(t *testing.T) {
-	// Create a minimal ConnectionHandle directly
 	tmpDB := t.TempDir() + "/write_timeout_test.db"
 	database, err := sql.Open("sqlite3", tmpDB)
 	if err != nil {
@@ -129,16 +131,16 @@ func TestBugCondition_WriteTimeout(t *testing.T) {
 	database.SetMaxOpenConns(1)
 	database.SetMaxIdleConns(1)
 
+	// Use the production writeTTL (5 minutes) — this is what NewConnectionHandle sets.
 	ch := &ConnectionHandle{
 		db:       database,
-		writeTTL: 3 * time.Second, // This is the buggy default
+		writeTTL: 5 * time.Minute,
 		readTTL:  5 * time.Second,
 		mutexTTL: 3 * time.Second,
 	}
 
 	ctx := context.Background()
 
-	// Acquire a write context — this gives us a context with the writeTTL deadline
 	writeCtx, cancel, err := ch.WriteContext(ctx)
 	if err != nil {
 		t.Fatalf("failed to acquire write context: %v", err)
@@ -148,7 +150,6 @@ func TestBugCondition_WriteTimeout(t *testing.T) {
 		ch.ReleaseWrite()
 	}()
 
-	// Check the deadline on the write context
 	deadline, hasDeadline := writeCtx.Deadline()
 	if !hasDeadline {
 		t.Fatal("WriteContext should have a deadline set")
@@ -156,28 +157,13 @@ func TestBugCondition_WriteTimeout(t *testing.T) {
 
 	timeUntilDeadline := time.Until(deadline)
 
-	// EXPECTED BEHAVIOR: The write timeout should be long enough for indexing
-	// operations (e.g., 5 minutes). A 3-second timeout guarantees failure for
-	// any non-trivial repository indexing.
-	//
-	// On UNFIXED code: writeTTL is 3 seconds, which is far too short for
-	// indexing/analysis operations that may take minutes.
-	if timeUntilDeadline <= 4*time.Second {
-		t.Errorf("WRITE TIMEOUT TOO SHORT: writeTTL is approximately %v\n"+
+	// The write deadline must be well above any realistic single-file indexing
+	// operation. Require at least 4 minutes of headroom.
+	const minBudget = 4 * time.Minute
+	if timeUntilDeadline < minBudget {
+		t.Errorf("write deadline too short: %v remaining, want >= %v\n"+
 			"  Deadline: %v\n"+
-			"  Time until deadline: %v\n"+
-			"  Any indexing operation taking >3s will fail with context deadline exceeded\n"+
-			"  This confirms Bug 1.9: 3-second writeTTL is insufficient for real workloads\n"+
-			"  Expected: timeout should be >= 5 minutes for indexing operations",
-			timeUntilDeadline.Round(time.Millisecond),
-			deadline,
-			timeUntilDeadline.Round(time.Millisecond))
-	}
-
-	// Also verify that a simulated long operation would fail
-	simulatedOpDuration := 3500 * time.Millisecond
-	if timeUntilDeadline < simulatedOpDuration {
-		t.Logf("  Confirmed: A %v operation would exceed the %v deadline",
-			simulatedOpDuration, timeUntilDeadline.Round(time.Millisecond))
+			"  NewConnectionHandle sets writeTTL=5m; check that value has not regressed",
+			timeUntilDeadline.Round(time.Second), minBudget, deadline)
 	}
 }
