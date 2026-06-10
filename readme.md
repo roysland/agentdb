@@ -89,7 +89,6 @@ agentdb mcp
 | `export` | Export a codebase to a portable `.agentdb` artifact |
 | `import` | Import a `.agentdb` artifact into the local database |
 | `workspace create/add/remove/list` | Manage cross-repository workspaces |
-| `memory add/get/list/update/search/delete/retrieve` | Long-term memory management |
 | `mcp` | Run MCP stdio server |
 | `version` | Print version |
 
