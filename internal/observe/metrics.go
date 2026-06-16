@@ -2,6 +2,7 @@ package observe
 
 import (
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -94,22 +95,76 @@ type ToolMetrics struct {
 	Window     *SlidingWindow
 }
 
-// MetricsCollector accumulates per-tool metrics in memory.
+// ParseStats tracks parser health counters across the process lifetime.
+type ParseStats struct {
+	TotalFiles    int64
+	Complete      int64
+	TextFallbacks int64 // degraded to plain-text chunking
+	Partial       int64 // merge conflict or nil tree
+	Panics        int64 // tree-sitter panics recovered
+	ZeroSymbols   int64 // parsed OK but yielded 0 symbols from a non-empty file
+}
+
+// IndexStats tracks indexing pipeline throughput across all runs.
+type IndexStats struct {
+	RunCount          int64
+	FilesIndexed      int64
+	ChunksIndexed     int64
+	EmbeddingFailures int64
+	TotalDurationMs   int64
+}
+
+// GraphStats tracks call graph topology accumulated across analyze runs.
+type GraphStats struct {
+	TotalSymbols int64
+	TotalEdges   int64
+}
+
+// SlowEntry records a single operation that exceeded the slow-query threshold.
+type SlowEntry struct {
+	Timestamp  string `json:"timestamp"`
+	Operation  string `json:"operation"`
+	DurationMs int64  `json:"duration_ms"`
+}
+
+// MetricsCollector accumulates per-tool metrics and domain diagnostics in memory.
 type MetricsCollector struct {
-	mu        sync.Mutex
-	startTime time.Time
-	tools     map[string]*ToolMetrics
+	mu           sync.Mutex
+	startTime    time.Time
+	tools        map[string]*ToolMetrics
+	parseStats   ParseStats
+	indexStats   IndexStats
+	graphStats   GraphStats
+	slowLog      []SlowEntry // recent slow operations, capped at slowLogCap
+	slowLogCap   int
+	slowThreshMs int64   // operations >= this threshold are flagged (default 500ms)
+	errTS        []int64 // recent error unix-millisecond timestamps, capped at errTSCap
+	errTSCap     int
 }
 
 // NewMetricsCollector creates a new MetricsCollector with the start time set to now.
 func NewMetricsCollector() *MetricsCollector {
 	return &MetricsCollector{
-		startTime: time.Now(),
-		tools:     make(map[string]*ToolMetrics),
+		startTime:    time.Now(),
+		tools:        make(map[string]*ToolMetrics),
+		slowLogCap:   20,
+		slowThreshMs: 500,
+		errTSCap:     120,
+	}
+}
+
+// SetSlowQueryThreshold overrides the duration threshold (in ms) above which an
+// operation is recorded in the slow-query log. Call before the first request.
+func (m *MetricsCollector) SetSlowQueryThreshold(ms int64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if ms > 0 {
+		m.slowThreshMs = ms
 	}
 }
 
 // Record records a tool call with its duration and error state.
+// It also captures slow-query entries and error timestamps for rate tracking.
 func (m *MetricsCollector) Record(tool string, durationMs int64, isError bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -128,6 +183,99 @@ func (m *MetricsCollector) Record(tool string, durationMs int64, isError bool) {
 		tm.ErrorCount++
 	}
 	tm.Window.Add(durationMs)
+
+	// Slow query detection
+	if m.slowThreshMs > 0 && durationMs >= m.slowThreshMs {
+		entry := SlowEntry{
+			Timestamp:  time.Now().UTC().Format(time.RFC3339),
+			Operation:  tool,
+			DurationMs: durationMs,
+		}
+		m.slowLog = append(m.slowLog, entry)
+		if len(m.slowLog) > m.slowLogCap {
+			m.slowLog = m.slowLog[len(m.slowLog)-m.slowLogCap:]
+		}
+	}
+
+	// Error timestamp ring for rate calculation
+	if isError {
+		m.errTS = append(m.errTS, time.Now().UnixMilli())
+		if len(m.errTS) > m.errTSCap {
+			m.errTS = m.errTS[len(m.errTS)-m.errTSCap:]
+		}
+	}
+}
+
+// RecordParseResult updates parser health counters for a single file.
+// status is "complete", "text_fallback", or "partial".
+// reason is the StatusReason string (used to detect tree-sitter panics).
+// symbolCount is the number of symbols extracted (0 is flagged for complete parses).
+func (m *MetricsCollector) RecordParseResult(status, reason string, symbolCount int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.parseStats.TotalFiles++
+	switch status {
+	case "complete":
+		m.parseStats.Complete++
+		if symbolCount == 0 {
+			m.parseStats.ZeroSymbols++
+		}
+	case "text_fallback":
+		m.parseStats.TextFallbacks++
+	case "partial":
+		m.parseStats.Partial++
+		if strings.HasPrefix(reason, "tree-sitter panic") {
+			m.parseStats.Panics++
+		}
+	default:
+		m.parseStats.Partial++
+	}
+}
+
+// RecordIndexRun records the outcome of one full or incremental index run.
+func (m *MetricsCollector) RecordIndexRun(files, chunks, embeddingFailures, durationMs int64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.indexStats.RunCount++
+	m.indexStats.FilesIndexed += files
+	m.indexStats.ChunksIndexed += chunks
+	m.indexStats.EmbeddingFailures += embeddingFailures
+	m.indexStats.TotalDurationMs += durationMs
+}
+
+// RecordGraphUpdate accumulates symbol and edge counts from one analyze run.
+func (m *MetricsCollector) RecordGraphUpdate(symbols, edges int64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.graphStats.TotalSymbols += symbols
+	m.graphStats.TotalEdges += edges
+}
+
+// ParseSummary is the parse-health section of ServerStats.
+type ParseSummary struct {
+	TotalFiles    int64   `json:"total_files"`
+	Complete      int64   `json:"complete"`
+	TextFallbacks int64   `json:"text_fallbacks"`
+	Partial       int64   `json:"partial"`
+	Panics        int64   `json:"panics"`
+	ZeroSymbols   int64   `json:"zero_symbols"`
+	DegradedPct   float64 `json:"degraded_pct"` // (text_fallbacks + partial) / total × 100
+}
+
+// IndexSummary is the indexing-throughput section of ServerStats.
+type IndexSummary struct {
+	RunCount          int64 `json:"run_count"`
+	FilesIndexed      int64 `json:"files_indexed"`
+	ChunksIndexed     int64 `json:"chunks_indexed"`
+	EmbeddingFailures int64 `json:"embedding_failures"`
+	AvgDurationMs     int64 `json:"avg_duration_ms"`
+}
+
+// GraphSummary is the call-graph topology section of ServerStats.
+type GraphSummary struct {
+	TotalSymbols int64   `json:"total_symbols"`
+	TotalEdges   int64   `json:"total_edges"`
+	Density      float64 `json:"density"` // edges / symbols; 0 when no symbols
 }
 
 // ServerStats holds the aggregated server statistics returned by Stats().
@@ -135,7 +283,12 @@ type ServerStats struct {
 	UptimeSeconds   int64                  `json:"uptime_seconds"`
 	TotalRequests   int64                  `json:"total_requests"`
 	ActiveCodebases int                    `json:"active_codebases"`
+	ErrorsLast60s   int64                  `json:"errors_last_60s"`
 	Tools           map[string]ToolSummary `json:"tools"`
+	Parse           ParseSummary           `json:"parse"`
+	Index           IndexSummary           `json:"index"`
+	Graph           GraphSummary           `json:"graph"`
+	SlowQueries     []SlowEntry            `json:"slow_queries,omitempty"`
 }
 
 // ToolSummary holds the per-tool breakdown in server stats.
@@ -147,7 +300,8 @@ type ToolSummary struct {
 }
 
 // Stats returns the current server statistics including uptime, total requests,
-// and per-tool breakdown with average and p95 durations.
+// per-tool breakdown, parse health, indexing throughput, graph density, and
+// recent slow-query entries.
 func (m *MetricsCollector) Stats() ServerStats {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -171,11 +325,66 @@ func (m *MetricsCollector) Stats() ServerStats {
 		}
 	}
 
+	// errors_last_60s: count timestamps within the last minute.
+	cutoffMs := time.Now().UnixMilli() - 60_000
+	var errLast60s int64
+	for _, ts := range m.errTS {
+		if ts >= cutoffMs {
+			errLast60s++
+		}
+	}
+
+	// Parse summary
+	parseSummary := ParseSummary{
+		TotalFiles:    m.parseStats.TotalFiles,
+		Complete:      m.parseStats.Complete,
+		TextFallbacks: m.parseStats.TextFallbacks,
+		Partial:       m.parseStats.Partial,
+		Panics:        m.parseStats.Panics,
+		ZeroSymbols:   m.parseStats.ZeroSymbols,
+	}
+	if m.parseStats.TotalFiles > 0 {
+		degraded := m.parseStats.TextFallbacks + m.parseStats.Partial
+		parseSummary.DegradedPct = float64(degraded) / float64(m.parseStats.TotalFiles) * 100
+	}
+
+	// Index summary
+	indexSummary := IndexSummary{
+		RunCount:          m.indexStats.RunCount,
+		FilesIndexed:      m.indexStats.FilesIndexed,
+		ChunksIndexed:     m.indexStats.ChunksIndexed,
+		EmbeddingFailures: m.indexStats.EmbeddingFailures,
+	}
+	if m.indexStats.RunCount > 0 {
+		indexSummary.AvgDurationMs = m.indexStats.TotalDurationMs / m.indexStats.RunCount
+	}
+
+	// Graph summary
+	graphSummary := GraphSummary{
+		TotalSymbols: m.graphStats.TotalSymbols,
+		TotalEdges:   m.graphStats.TotalEdges,
+	}
+	if m.graphStats.TotalSymbols > 0 {
+		graphSummary.Density = float64(m.graphStats.TotalEdges) / float64(m.graphStats.TotalSymbols)
+	}
+
+	// Snapshot slow log (copy to avoid escaping the lock)
+	var slowSnapshot []SlowEntry
+	if len(m.slowLog) > 0 {
+		slowSnapshot = make([]SlowEntry, len(m.slowLog))
+		copy(slowSnapshot, m.slowLog)
+	}
+
 	return ServerStats{
 		UptimeSeconds:   int64(time.Since(m.startTime).Seconds()),
 		TotalRequests:   totalRequests,
 		ActiveCodebases: 0, // populated by caller from database
+		ErrorsLast60s:   errLast60s,
 		Tools:           tools,
+		Parse:           parseSummary,
+		Index:           indexSummary,
+		Graph:           graphSummary,
+		SlowQueries:     slowSnapshot,
 	}
 }
 
@@ -186,4 +395,9 @@ func (m *MetricsCollector) Reset() {
 
 	m.startTime = time.Now()
 	m.tools = make(map[string]*ToolMetrics)
+	m.parseStats = ParseStats{}
+	m.indexStats = IndexStats{}
+	m.graphStats = GraphStats{}
+	m.slowLog = nil
+	m.errTS = nil
 }

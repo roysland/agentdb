@@ -191,6 +191,138 @@ func TestStats_AvgDuration_IntegerDivision(t *testing.T) {
 	}
 }
 
+func TestRecordParseResult_Counters(t *testing.T) {
+	mc := NewMetricsCollector()
+	mc.RecordParseResult("complete", "", 5)
+	mc.RecordParseResult("complete", "", 0)   // zero symbols
+	mc.RecordParseResult("text_fallback", "", 0)
+	mc.RecordParseResult("partial", "merge conflict markers", 0)
+	mc.RecordParseResult("partial", "tree-sitter panic: nil deref", 0)
+
+	stats := mc.Stats()
+	p := stats.Parse
+	if p.TotalFiles != 5 {
+		t.Errorf("TotalFiles: got %d want 5", p.TotalFiles)
+	}
+	if p.Complete != 2 {
+		t.Errorf("Complete: got %d want 2", p.Complete)
+	}
+	if p.ZeroSymbols != 1 {
+		t.Errorf("ZeroSymbols: got %d want 1", p.ZeroSymbols)
+	}
+	if p.TextFallbacks != 1 {
+		t.Errorf("TextFallbacks: got %d want 1", p.TextFallbacks)
+	}
+	if p.Partial != 2 {
+		t.Errorf("Partial: got %d want 2", p.Partial)
+	}
+	if p.Panics != 1 {
+		t.Errorf("Panics: got %d want 1", p.Panics)
+	}
+	// degraded = text_fallback + partial = 3; pct = 3/5*100 = 60.0
+	if p.DegradedPct != 60.0 {
+		t.Errorf("DegradedPct: got %f want 60.0", p.DegradedPct)
+	}
+}
+
+func TestRecordIndexRun(t *testing.T) {
+	mc := NewMetricsCollector()
+	mc.RecordIndexRun(100, 500, 3, 2000)
+	mc.RecordIndexRun(50, 200, 1, 1000)
+
+	stats := mc.Stats()
+	idx := stats.Index
+	if idx.RunCount != 2 {
+		t.Errorf("RunCount: got %d want 2", idx.RunCount)
+	}
+	if idx.FilesIndexed != 150 {
+		t.Errorf("FilesIndexed: got %d want 150", idx.FilesIndexed)
+	}
+	if idx.ChunksIndexed != 700 {
+		t.Errorf("ChunksIndexed: got %d want 700", idx.ChunksIndexed)
+	}
+	if idx.EmbeddingFailures != 4 {
+		t.Errorf("EmbeddingFailures: got %d want 4", idx.EmbeddingFailures)
+	}
+	if idx.AvgDurationMs != 1500 {
+		t.Errorf("AvgDurationMs: got %d want 1500", idx.AvgDurationMs)
+	}
+}
+
+func TestRecordGraphUpdate(t *testing.T) {
+	mc := NewMetricsCollector()
+	mc.RecordGraphUpdate(200, 600)
+	mc.RecordGraphUpdate(100, 150)
+
+	stats := mc.Stats()
+	g := stats.Graph
+	if g.TotalSymbols != 300 {
+		t.Errorf("TotalSymbols: got %d want 300", g.TotalSymbols)
+	}
+	if g.TotalEdges != 750 {
+		t.Errorf("TotalEdges: got %d want 750", g.TotalEdges)
+	}
+	wantDensity := float64(750) / float64(300)
+	if g.Density != wantDensity {
+		t.Errorf("Density: got %f want %f", g.Density, wantDensity)
+	}
+}
+
+func TestSlowQueryLog(t *testing.T) {
+	mc := NewMetricsCollector()
+	mc.SetSlowQueryThreshold(100)
+	mc.Record("fast_tool", 50, false)
+	mc.Record("slow_tool", 200, false)
+	mc.Record("slow_tool2", 500, false)
+
+	stats := mc.Stats()
+	if len(stats.SlowQueries) != 2 {
+		t.Errorf("SlowQueries: got %d want 2", len(stats.SlowQueries))
+	}
+	if stats.SlowQueries[0].Operation != "slow_tool" {
+		t.Errorf("first slow op: got %q want %q", stats.SlowQueries[0].Operation, "slow_tool")
+	}
+}
+
+func TestErrorsLast60s(t *testing.T) {
+	mc := NewMetricsCollector()
+	mc.Record("tool", 10, true)
+	mc.Record("tool", 10, true)
+	mc.Record("tool", 10, false)
+
+	stats := mc.Stats()
+	if stats.ErrorsLast60s != 2 {
+		t.Errorf("ErrorsLast60s: got %d want 2", stats.ErrorsLast60s)
+	}
+}
+
+func TestReset_ClearsAllStats(t *testing.T) {
+	mc := NewMetricsCollector()
+	mc.RecordParseResult("text_fallback", "", 0)
+	mc.RecordIndexRun(10, 50, 1, 100)
+	mc.RecordGraphUpdate(20, 40)
+	mc.Record("tool", 600, true)
+
+	mc.Reset()
+
+	stats := mc.Stats()
+	if stats.Parse.TotalFiles != 0 {
+		t.Errorf("expected Parse.TotalFiles 0 after reset, got %d", stats.Parse.TotalFiles)
+	}
+	if stats.Index.RunCount != 0 {
+		t.Errorf("expected Index.RunCount 0 after reset, got %d", stats.Index.RunCount)
+	}
+	if stats.Graph.TotalSymbols != 0 {
+		t.Errorf("expected Graph.TotalSymbols 0 after reset, got %d", stats.Graph.TotalSymbols)
+	}
+	if len(stats.SlowQueries) != 0 {
+		t.Errorf("expected empty SlowQueries after reset, got %d", len(stats.SlowQueries))
+	}
+	if stats.ErrorsLast60s != 0 {
+		t.Errorf("expected ErrorsLast60s 0 after reset, got %d", stats.ErrorsLast60s)
+	}
+}
+
 func TestCeiling95(t *testing.T) {
 	tests := []struct {
 		n        int

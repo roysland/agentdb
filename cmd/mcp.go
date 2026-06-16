@@ -87,6 +87,11 @@ func runMCPServer(ctx context.Context, cfg config.Runtime, in io.Reader, out io.
 
 	// Initialize metrics collector.
 	mcpMetrics = observe.NewMetricsCollector()
+	if threshStr := os.Getenv("AGENTDB_SLOW_QUERY_MS"); threshStr != "" {
+		if thresh, err := strconv.ParseInt(threshStr, 10, 64); err == nil && thresh > 0 {
+			mcpMetrics.SetSlowQueryThreshold(thresh)
+		}
+	}
 
 	// Initialize shared persistent connection handle.
 	connHandle, err := db.NewConnectionHandle(ctx, cfg, mcpLogger)
@@ -1313,6 +1318,8 @@ func mcpIndexCodebase(ctx context.Context, conn *sql.DB, args map[string]any) (m
 	if codebaseID <= 0 || codebasePath == "" {
 		return nil, errors.New("codebase_id and codebase_path are required")
 	}
+	indexStartTime := time.Now()
+	var indexEmbedFailures int64
 
 	chunkRepo := store.NewChunkRepo(conn)
 	indexedFileRepo := store.NewIndexedFileRepo(conn)
@@ -1392,6 +1399,8 @@ func mcpIndexCodebase(ctx context.Context, conn *sql.DB, args map[string]any) (m
 						if embErr == nil {
 							chunkData.Embedding = emb
 							chunkData.EmbeddingModel = provider.ModelName()
+						} else {
+							indexEmbedFailures++
 						}
 					}
 					chunkID, createErr := chunkRepo.CreateReturningID(ctx, codebaseID, chunkData)
@@ -1458,6 +1467,9 @@ func mcpIndexCodebase(ctx context.Context, conn *sql.DB, args map[string]any) (m
 				result["warning"] = embedWarning
 				result["mode_used"] = "lexical_only"
 			}
+			if mcpMetrics != nil {
+				mcpMetrics.RecordIndexRun(int64(totalFiles), int64(totalChunks), indexEmbedFailures, time.Since(indexStartTime).Milliseconds())
+			}
 			return mcpToolTextResult(result), nil
 		}
 	}
@@ -1500,6 +1512,8 @@ func mcpIndexCodebase(ctx context.Context, conn *sql.DB, args map[string]any) (m
 				if embErr == nil {
 					chunkData.Embedding = emb
 					chunkData.EmbeddingModel = provider.ModelName()
+				} else {
+					indexEmbedFailures++
 				}
 			}
 			chunkID, createErr := chunkRepo.CreateReturningID(ctx, codebaseID, chunkData)
@@ -1549,6 +1563,9 @@ func mcpIndexCodebase(ctx context.Context, conn *sql.DB, args map[string]any) (m
 	if embedWarning != "" {
 		result["warning"] = embedWarning
 		result["mode_used"] = "lexical_only"
+	}
+	if mcpMetrics != nil {
+		mcpMetrics.RecordIndexRun(int64(len(fileResults)), int64(totalChunks), indexEmbedFailures, time.Since(indexStartTime).Milliseconds())
 	}
 
 	return mcpToolTextResult(result), nil
@@ -1835,6 +1852,9 @@ func mcpAnalyzeCodebase(ctx context.Context, conn *sql.DB, args map[string]any) 
 				if analyzeResult == nil {
 					continue
 				}
+				if mcpMetrics != nil {
+					mcpMetrics.RecordParseResult(analyzeResult.IndexStatus, analyzeResult.StatusReason, len(analyzeResult.FileResult.Symbols))
+				}
 
 				result := analyzeResult.FileResult
 
@@ -1920,6 +1940,9 @@ func mcpAnalyzeCodebase(ctx context.Context, conn *sql.DB, args map[string]any) 
 				"incremental":       true,
 			}
 			appendWriteErrorSummary(result)
+			if mcpMetrics != nil {
+				mcpMetrics.RecordGraphUpdate(int64(totalSymbols), int64(totalEdges))
+			}
 			return mcpToolTextResult(result), nil
 		}
 	}
@@ -1974,6 +1997,9 @@ func mcpAnalyzeCodebase(ctx context.Context, conn *sql.DB, args map[string]any) 
 	totalSymbols, totalEdges, totalFiles := 0, 0, 0
 
 	for _, ar := range analyzeResults {
+		if mcpMetrics != nil {
+			mcpMetrics.RecordParseResult(ar.IndexStatus, ar.StatusReason, len(ar.FileResult.Symbols))
+		}
 		result := ar.FileResult
 		if err := sfRepo.Upsert(ctx, codebaseID, store.SourceFileData{
 			FilePath: result.FilePath, Language: result.Language,
@@ -2041,6 +2067,9 @@ func mcpAnalyzeCodebase(ctx context.Context, conn *sql.DB, args map[string]any) 
 		"incremental": false,
 	}
 	appendWriteErrorSummary(result)
+	if mcpMetrics != nil {
+		mcpMetrics.RecordGraphUpdate(int64(totalSymbols), int64(totalEdges))
+	}
 
 	return mcpToolTextResult(result), nil
 }
