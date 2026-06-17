@@ -1,0 +1,6 @@
+{
+  "name": "agentdb-parsers",
+  "version": "1.0.0",
+  "languages": ["python", "typescript", "tsx", "javascript", "rust"],
+  "binary": "./agentdb-parsers"
+}

@@ -4,27 +4,31 @@ agentdb pre-indexes your codebase into a local SQLite database — symbols, call
 
 ## Installation
 
-**Go-only binary** (supports Go source only, no CGo required):
-
 ```bash
 go install github.com/roysland/agentdb@latest
 ```
 
-**Multi-language binary** (Go, Python, TypeScript, JavaScript, Rust — requires CGo and a C compiler):
+Requires Go 1.24+. Pure Go, no CGo required.
+
+**For Python, TypeScript, JavaScript, and Rust support**, install the parsers plugin (requires CGo and a C compiler):
 
 ```bash
-go install -tags treesitter github.com/roysland/agentdb@latest
+go install -tags treesitter github.com/roysland/agentdb/plugins/parsers@latest
 ```
 
-Requires Go 1.24+.
+Then place the binary and a `manifest.json` in `~/.agentdb/plugins/agentdb-parsers/`. A template manifest is at `plugins/parsers/manifest.json` in the repo.
 
 ## Building Locally
 
+Main binary:
 ```bash
-CGO_ENABLED=1 go build -tags "treesitter sqlite_fts5" -o ~/.local/bin/agentdb .
+go build -o ~/.local/bin/agentdb .
 ```
 
-Drop `treesitter` from `-tags` if you only need Go support and want a CGo-free build.
+Parser plugin:
+```bash
+CGO_ENABLED=1 go build -tags treesitter -o ~/.local/bin/agentdb-parsers ./plugins/parsers/
+```
 
 ## Configuration
 

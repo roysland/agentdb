@@ -297,40 +297,39 @@ The plugin protocol supports three methods: `capabilities` (handshake), `parse` 
 
 ## Language Support
 
-The default binary (pure Go, no CGo) supports **Go only** via `go/ast`.
+The main binary (pure Go, no CGo) supports **Go only** via `go/ast`.
 
-For additional languages, build with the `treesitter` tag:
+For Python, TypeScript, TSX, JavaScript, and Rust, install the `agentdb-parsers` plugin (requires CGo and a C compiler):
 
 ```bash
-go install -tags treesitter github.com/roysland/agentdb@latest
+go install -tags treesitter github.com/roysland/agentdb/plugins/parsers@latest
 ```
 
-This enables tree-sitter parsers for:
-- Python
-- TypeScript / TSX / JavaScript
-- Rust
+Then set it up as a plugin:
 
-The treesitter build requires CGo and a C compiler. The default `go install` produces a Go-only binary.
+```bash
+mkdir -p ~/.agentdb/plugins/agentdb-parsers
+cp $(go env GOPATH)/bin/agentdb-parsers ~/.agentdb/plugins/agentdb-parsers/
+cp $(go env GOPATH)/src/github.com/roysland/agentdb/plugins/parsers/manifest.json ~/.agentdb/plugins/agentdb-parsers/
+```
 
 ### Resilient Parsing
 
-The tree-sitter parsing layer includes graceful degradation:
+When using the parsers plugin:
 
-- **Error threshold** — If a file has >15% ERROR nodes in its AST, symbol extraction is aborted and the file falls back to text-based chunking. This prevents corrupted symbol graphs from poisoning search results.
-- **Merge conflict detection** — Files with merge conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`) are marked as `partial` and skipped for AST extraction.
-- **Panic recovery** — Tree-sitter crashes are caught and don't bring down the MCP server.
-- **Health reporting** — The parser reports which grammars loaded successfully at startup.
+- **Error threshold** — Files with >15% ERROR nodes in their AST fall back to text-based chunking.
+- **Merge conflict detection** — Files with conflict markers are marked `partial` and skipped for AST extraction.
+- **Panic recovery** — Parser crashes are caught and don't bring down the MCP server.
 
-MCP tool responses annotate results from degraded files so agents know when data confidence is reduced.
+MCP tool responses annotate results from degraded files.
 
 ## AST-Aware Chunking
 
-Code is chunked at semantic boundaries (functions, classes, methods, modules) rather than fixed line counts. This means retrieved snippets contain complete logical units.
+Go source is chunked at semantic boundaries (functions, types, methods) rather than fixed line counts. Chunks carry `kind`, `name`, and `signature` metadata. Large nodes (>100 lines) are subdivided at nested block boundaries.
 
-- Chunks carry `kind`, `name`, and `signature` metadata extracted from the AST
-- Large nodes (>100 lines) are subdivided at nested block boundaries
-- Non-code content (markdown, prose) uses BPE token-count windowing with paragraph-boundary preference
-- Concatenating all chunks reproduces the original file (round-trip property)
+Non-Go languages (handled by the parsers plugin) fall back to line-based chunking for the index step; symbol and call graph extraction via the plugin is still accurate.
+
+Non-code content (markdown, prose) uses BPE token-count windowing with paragraph-boundary preference.
 
 ## FTS5 Search
 
@@ -505,8 +504,15 @@ SQLite database with these tables:
 
 
 # Build locally
+
+Main binary (pure Go):
 ```bash
-CGO_ENABLED=1 go build -tags "treesitter sqlite_fts5" -o ~/.local/bin/agentdb .
+go build -o ~/.local/bin/agentdb .
+```
+
+Parser plugin (requires CGo):
+```bash
+CGO_ENABLED=1 go build -tags treesitter -o ~/.local/bin/agentdb-parsers ./plugins/parsers/
 ```
 ## License
 

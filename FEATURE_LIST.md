@@ -8,7 +8,7 @@
 - **Call graph construction** — Builds directed edges for imports, function calls, and type usage
 - **Incremental indexing** — Detects changed files via SHA-256 hashing and re-processes only what changed
 - **Incremental analysis** — Re-extracts symbols/edges only for modified files, preserving data for unchanged files
-- **Multi-language support** — Go (built-in), Python/TypeScript/Rust (tree-sitter build), extensible via plugins
+- **Multi-language support** — Go (built-in), Python/TypeScript/JavaScript/Rust (via `agentdb-parsers` plugin), extensible via additional plugins
 
 ## Search
 
