@@ -5,68 +5,6 @@ import (
 	"testing"
 )
 
-func TestComputeConfidenceScore(t *testing.T) {
-	tests := []struct {
-		name             string
-		cosineSimilarity float64
-		normalizedBM25   float64
-		want             float64
-	}{
-		{
-			name:             "both zero",
-			cosineSimilarity: 0.0,
-			normalizedBM25:   0.0,
-			want:             0.0,
-		},
-		{
-			name:             "both max",
-			cosineSimilarity: 1.0,
-			normalizedBM25:   1.0,
-			want:             1.0,
-		},
-		{
-			name:             "typical values",
-			cosineSimilarity: 0.8,
-			normalizedBM25:   0.6,
-			want:             0.72, // 0.6*0.8 + 0.4*0.6 = 0.48 + 0.24
-		},
-		{
-			name:             "clamps above 1.0",
-			cosineSimilarity: 1.5,
-			normalizedBM25:   1.5,
-			want:             1.0,
-		},
-		{
-			name:             "clamps below 0.0",
-			cosineSimilarity: -1.0,
-			normalizedBM25:   -1.0,
-			want:             0.0,
-		},
-		{
-			name:             "cosine only",
-			cosineSimilarity: 0.9,
-			normalizedBM25:   0.0,
-			want:             0.54, // 0.6*0.9 + 0.4*0.0
-		},
-		{
-			name:             "bm25 only",
-			cosineSimilarity: 0.0,
-			normalizedBM25:   0.9,
-			want:             0.36, // 0.6*0.0 + 0.4*0.9
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := ComputeConfidenceScore(tt.cosineSimilarity, tt.normalizedBM25)
-			if math.Abs(got-tt.want) > 1e-9 {
-				t.Errorf("ComputeConfidenceScore(%v, %v) = %v, want %v",
-					tt.cosineSimilarity, tt.normalizedBM25, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestComputeConfidenceScoreLexicalOnly(t *testing.T) {
 	tests := []struct {
 		name           string

@@ -22,7 +22,6 @@ import (
 
 	"github.com/roysland/agentdb/internal/config"
 	"github.com/roysland/agentdb/internal/db"
-	"github.com/roysland/agentdb/internal/embed"
 	"github.com/roysland/agentdb/internal/filefilter"
 	"github.com/roysland/agentdb/internal/index"
 	"github.com/roysland/agentdb/internal/observe"
@@ -136,9 +135,8 @@ func runMCPServer(ctx context.Context, cfg config.Runtime, in io.Reader, out io.
 		Operation: "server_start",
 		Status:    "ok",
 		Params: mustMarshalJSON(map[string]string{
-			"version":            version,
-			"database_path":      cfg.DatabaseURL,
-			"embedding_provider": cfg.EmbeddingProvider,
+			"version":       version,
+			"database_path": cfg.DatabaseURL,
 		}),
 	})
 
@@ -249,17 +247,11 @@ func mcpTools() []map[string]any {
 				"properties": map[string]any{
 					"query":        map[string]any{"type": "string"},
 					"source":       map[string]any{"type": "string", "enum": []string{"memories", "chunks", "both"}},
-					"mode":         map[string]any{"type": "string", "enum": []string{"lexical", "vector", "hybrid"}},
+					"mode":         map[string]any{"type": "string", "enum": []string{"lexical"}},
 					"category":     map[string]any{"type": "string"},
 					"workspace_id": map[string]any{"type": "integer", "description": "Optional memory scope for workspace-bound memories"},
 					"codebase_id":  map[string]any{"type": "integer"},
 					"limit":        map[string]any{"type": "integer"},
-					"query_embedding": map[string]any{
-						"oneOf": []map[string]any{
-							{"type": "array", "items": map[string]any{"type": "number"}},
-							{"type": "string"},
-						},
-					},
 				},
 				"required": []string{"query"},
 			},
@@ -290,7 +282,6 @@ func mcpTools() []map[string]any {
 					"codebase_id":     map[string]any{"type": "integer"},
 					"codebase_path":   map[string]any{"type": "string"},
 					"lines_per_chunk": map[string]any{"type": "integer"},
-					"embed":           map[string]any{"type": "boolean"},
 					"incremental":     map[string]any{"type": "boolean", "description": "Only re-index changed files (uses stored file hashes)"},
 				},
 				"required": []string{"codebase_id", "codebase_path"},
@@ -298,7 +289,7 @@ func mcpTools() []map[string]any {
 		},
 		{
 			"name":        "index_status",
-			"description": "Use when: checking chunk index and embedding readiness. Requires: codebase_id. Avoid when: data is missing/stale and you should run index_codebase instead.",
+			"description": "Use when: checking chunk index status. Requires: codebase_id. Avoid when: data is missing/stale and you should run index_codebase instead.",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -334,7 +325,6 @@ func mcpTools() []map[string]any {
 				"properties": map[string]any{
 					"codebase_id":   map[string]any{"type": "integer"},
 					"codebase_path": map[string]any{"type": "string"},
-					"embed":         map[string]any{"type": "boolean"},
 					"incremental":   map[string]any{"type": "boolean", "description": "Only re-analyze changed files (uses stored file hashes)"},
 				},
 				"required": []string{"codebase_id", "codebase_path"},
@@ -425,27 +415,6 @@ func mcpTools() []map[string]any {
 					"codebase_id": map[string]any{"type": "integer"},
 				},
 				"required": []string{"codebase_id"},
-			},
-		},
-		{
-			"name":        "semantic_search",
-			"description": "Use when: query intent is conceptual and exact symbol name is unknown. Requires: query and codebase_id. Avoid when: exact spelling is known.",
-			"inputSchema": map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"query":                map[string]any{"type": "string", "description": "Natural language description to search for"},
-					"codebase_id":          map[string]any{"type": "integer", "description": "Target codebase ID"},
-					"limit":                map[string]any{"type": "integer", "description": "Max results (default 10)"},
-					"include_blast_radius": map[string]any{"type": "boolean", "description": "Enrich results with callers/callees/dependents (default false)"},
-					"query_embedding": map[string]any{
-						"oneOf": []map[string]any{
-							{"type": "array", "items": map[string]any{"type": "number"}},
-							{"type": "string"},
-						},
-						"description": "Pre-computed query embedding (array or CSV). Bypasses embedding provider.",
-					},
-				},
-				"required": []string{"query", "codebase_id"},
 			},
 		},
 		{
@@ -854,10 +823,6 @@ func handleMCPToolCall(ctx context.Context, rawParams json.RawMessage) (map[stri
 		rctx, cancel := mcpConnHandle.ReadContext(ctx)
 		defer cancel()
 		return mcpProjectOverview(rctx, conn, req.Arguments)
-	case "semantic_search":
-		rctx, cancel := mcpConnHandle.ReadContext(ctx)
-		defer cancel()
-		return mcpSemanticSearch(rctx, conn, req.Arguments)
 	case "server_stats":
 		rctx, cancel := mcpConnHandle.ReadContext(ctx)
 		defer cancel()
@@ -936,17 +901,6 @@ func mcpSearch(ctx context.Context, conn *sql.DB, args map[string]any) (map[stri
 		return nil, errors.New("source must be one of memories|chunks|both")
 	}
 
-	mode := strings.ToLower(strings.TrimSpace(toString(args["mode"])))
-	if mode == "" {
-		mode = "hybrid"
-	}
-	if mode == "semantic" {
-		mode = "vector"
-	}
-	if mode != "lexical" && mode != "vector" && mode != "hybrid" {
-		return nil, errors.New("mode must be one of lexical|vector|hybrid")
-	}
-
 	category := strings.TrimSpace(toString(args["category"]))
 	workspaceID := toInt64(args["workspace_id"], 0)
 	codebaseID := toInt64(args["codebase_id"], 0)
@@ -956,24 +910,8 @@ func mcpSearch(ctx context.Context, conn *sql.DB, args map[string]any) (map[stri
 		return nil, errors.New("codebase_id is required when source includes chunks")
 	}
 
-	var queryEmbedding []float32
-	var warning string
-
-	if mode != "lexical" {
-		var err error
-		queryEmbedding, err = parseMCPQueryEmbeddingArg(args["query_embedding"])
-		if err != nil {
-			return nil, err
-		}
-		if len(queryEmbedding) == 0 {
-			queryEmbedding, err = resolveQueryEmbedding(ctx, query, "")
-			if err != nil {
-				warning = err.Error()
-			}
-		}
-	}
-
 	hits := make([]map[string]any, 0)
+	var warning string
 
 	if source == "memories" || source == "both" {
 		memoryRepo := store.NewMemoryRepo(conn)
@@ -981,44 +919,8 @@ func mcpSearch(ctx context.Context, conn *sql.DB, args map[string]any) (map[stri
 		if err != nil {
 			return nil, err
 		}
-
-		switch mode {
-		case "lexical":
-			for _, m := range lexicalMem {
-				hits = append(hits, map[string]any{"source": "memory", "id": m.ID, "content": m.Content, "category": m.Category, "created_at": m.CreatedAt})
-			}
-		case "vector":
-			if len(queryEmbedding) == 0 {
-				for _, m := range lexicalMem {
-					hits = append(hits, map[string]any{"source": "memory", "id": m.ID, "content": m.Content, "category": m.Category, "created_at": m.CreatedAt})
-				}
-				break
-			}
-			candidates, err := memoryRepo.ListWithEmbeddings(ctx, category, max(limit*20, 200), workspaceID, codebaseID)
-			if err != nil {
-				return nil, err
-			}
-			ranked := search.RankMemoriesByCosine(candidates, queryEmbedding, limit)
-			for _, r := range ranked {
-				hits = append(hits, map[string]any{"source": "memory", "score": r.Score, "id": r.ID, "content": r.Content, "category": r.Category, "created_at": r.CreatedAt})
-			}
-		case "hybrid":
-			if len(queryEmbedding) == 0 {
-				for _, m := range lexicalMem {
-					hits = append(hits, map[string]any{"source": "memory", "id": m.ID, "content": m.Content, "category": m.Category, "created_at": m.CreatedAt})
-				}
-				break
-			}
-			ranked := search.RankMemoriesByCosine(lexicalMem, queryEmbedding, limit)
-			if len(ranked) == 0 {
-				for _, m := range lexicalMem {
-					hits = append(hits, map[string]any{"source": "memory", "id": m.ID, "content": m.Content, "category": m.Category, "created_at": m.CreatedAt})
-				}
-				break
-			}
-			for _, r := range ranked {
-				hits = append(hits, map[string]any{"source": "memory", "score": r.Score, "id": r.ID, "content": r.Content, "category": r.Category, "created_at": r.CreatedAt})
-			}
+		for _, m := range lexicalMem {
+			hits = append(hits, map[string]any{"source": "memory", "id": m.ID, "content": m.Content, "category": m.Category, "created_at": m.CreatedAt})
 		}
 	}
 
@@ -1029,131 +931,25 @@ func mcpSearch(ctx context.Context, conn *sql.DB, args map[string]any) (map[stri
 		ftsAvailable := mcpFTS5 != nil && mcpFTS5.IsAvailable(ctx)
 
 		if ftsAvailable {
-			switch mode {
-			case "lexical":
-				ftsResults, err := mcpFTS5.SearchLexical(ctx, query, codebaseID, limit)
-				if err != nil {
-					// FTS5 query failed, fall back to in-memory scan
-					ftsAvailable = false
-				} else {
-					for _, r := range ftsResults {
-						hit := map[string]any{
-							"source":      "chunk",
-							"id":          r.ChunkID,
-							"file_path":   r.FilePath,
-							"name":        r.Name,
-							"kind":        r.Kind,
-							"start_line":  r.StartLine,
-							"end_line":    r.EndLine,
-							"snippet":     r.Snippet,
-							"codebase_id": codebaseID,
-							"bm25_score":  r.BM25Score,
-						}
-						if r.IsPending {
-							hit["vector_applied"] = false
-						}
-						hits = append(hits, compactMCPSearchHit(hit))
+			ftsResults, err := mcpFTS5.SearchLexical(ctx, query, codebaseID, limit)
+			if err != nil {
+				// FTS5 query failed, fall back to in-memory scan
+				ftsAvailable = false
+			} else {
+				for _, r := range ftsResults {
+					hit := map[string]any{
+						"source":      "chunk",
+						"id":          r.ChunkID,
+						"file_path":   r.FilePath,
+						"name":        r.Name,
+						"kind":        r.Kind,
+						"start_line":  r.StartLine,
+						"end_line":    r.EndLine,
+						"snippet":     r.Snippet,
+						"codebase_id": codebaseID,
+						"bm25_score":  r.BM25Score,
 					}
-				}
-			case "vector":
-				if len(queryEmbedding) == 0 {
-					// No embedding available, use lexical via FTS5
-					ftsResults, err := mcpFTS5.SearchLexical(ctx, query, codebaseID, limit)
-					if err != nil {
-						ftsAvailable = false
-					} else {
-						for _, r := range ftsResults {
-							hit := map[string]any{
-								"source":      "chunk",
-								"id":          r.ChunkID,
-								"file_path":   r.FilePath,
-								"name":        r.Name,
-								"kind":        r.Kind,
-								"start_line":  r.StartLine,
-								"end_line":    r.EndLine,
-								"snippet":     r.Snippet,
-								"codebase_id": codebaseID,
-							}
-							if r.IsPending {
-								hit["vector_applied"] = false
-							}
-							hits = append(hits, compactMCPSearchHit(hit))
-						}
-					}
-				} else {
-					// Use hybrid search (FTS5 candidates re-ranked by cosine)
-					hybridResults, err := mcpFTS5.SearchHybrid(ctx, query, queryEmbedding, codebaseID, limit)
-					if err != nil {
-						ftsAvailable = false
-					} else {
-						for _, r := range hybridResults {
-							hit := map[string]any{
-								"source":         "chunk",
-								"id":             r.ChunkID,
-								"file_path":      r.FilePath,
-								"name":           r.Name,
-								"kind":           r.Kind,
-								"start_line":     r.StartLine,
-								"end_line":       r.EndLine,
-								"snippet":        r.Snippet,
-								"codebase_id":    codebaseID,
-								"score":          r.CombinedScore,
-								"cosine_score":   r.CosineScore,
-								"vector_applied": r.VectorApplied,
-							}
-							hits = append(hits, compactMCPSearchHit(hit))
-						}
-					}
-				}
-			case "hybrid":
-				if len(queryEmbedding) == 0 {
-					// No embedding, use lexical via FTS5
-					ftsResults, err := mcpFTS5.SearchLexical(ctx, query, codebaseID, limit)
-					if err != nil {
-						ftsAvailable = false
-					} else {
-						for _, r := range ftsResults {
-							hit := map[string]any{
-								"source":      "chunk",
-								"id":          r.ChunkID,
-								"file_path":   r.FilePath,
-								"name":        r.Name,
-								"kind":        r.Kind,
-								"start_line":  r.StartLine,
-								"end_line":    r.EndLine,
-								"snippet":     r.Snippet,
-								"codebase_id": codebaseID,
-							}
-							if r.IsPending {
-								hit["vector_applied"] = false
-							}
-							hits = append(hits, compactMCPSearchHit(hit))
-						}
-					}
-				} else {
-					// Full hybrid: FTS5 + cosine re-ranking
-					hybridResults, err := mcpFTS5.SearchHybrid(ctx, query, queryEmbedding, codebaseID, limit)
-					if err != nil {
-						ftsAvailable = false
-					} else {
-						for _, r := range hybridResults {
-							hit := map[string]any{
-								"source":         "chunk",
-								"id":             r.ChunkID,
-								"file_path":      r.FilePath,
-								"name":           r.Name,
-								"kind":           r.Kind,
-								"start_line":     r.StartLine,
-								"end_line":       r.EndLine,
-								"snippet":        r.Snippet,
-								"codebase_id":    codebaseID,
-								"score":          r.CombinedScore,
-								"cosine_score":   r.CosineScore,
-								"vector_applied": r.VectorApplied,
-							}
-							hits = append(hits, compactMCPSearchHit(hit))
-						}
-					}
+					hits = append(hits, compactMCPSearchHit(hit))
 				}
 			}
 		}
@@ -1168,55 +964,14 @@ func mcpSearch(ctx context.Context, conn *sql.DB, args map[string]any) (map[stri
 			}
 
 			queryLower := strings.ToLower(query)
-			lexicalChunks := make([]store.Chunk, 0)
 			for _, c := range chunks {
 				s := strings.ToLower(c.Snippet)
 				if strings.Contains(s, queryLower) || strings.Contains(strings.ToLower(c.Name), queryLower) {
-					lexicalChunks = append(lexicalChunks, c)
-				}
-			}
-
-			switch mode {
-			case "lexical":
-				for _, c := range trimChunks(lexicalChunks, limit) {
 					hits = append(hits, compactMCPSearchHit(map[string]any{"source": "chunk", "id": c.ID, "codebase_id": c.CodebaseID, "file_path": c.FilePath, "name": c.Name, "kind": c.Kind, "start_line": c.StartLine, "end_line": c.EndLine, "snippet": c.Snippet}))
 				}
-			case "vector":
-				if len(queryEmbedding) == 0 {
-					for _, c := range trimChunks(lexicalChunks, limit) {
-						hits = append(hits, compactMCPSearchHit(map[string]any{"source": "chunk", "id": c.ID, "codebase_id": c.CodebaseID, "file_path": c.FilePath, "name": c.Name, "kind": c.Kind, "start_line": c.StartLine, "end_line": c.EndLine, "snippet": c.Snippet}))
-					}
-					break
-				}
-				ranked := rankChunksByCosine(chunks, queryEmbedding, limit)
-				for _, r := range ranked {
-					r["source"] = "chunk"
-					hits = append(hits, compactMCPSearchHit(r))
-				}
-			case "hybrid":
-				if len(queryEmbedding) == 0 {
-					for _, c := range trimChunks(lexicalChunks, limit) {
-						hits = append(hits, compactMCPSearchHit(map[string]any{"source": "chunk", "id": c.ID, "codebase_id": c.CodebaseID, "file_path": c.FilePath, "name": c.Name, "kind": c.Kind, "start_line": c.StartLine, "end_line": c.EndLine, "snippet": c.Snippet}))
-					}
-					break
-				}
-				ranked := rankChunksByCosine(lexicalChunks, queryEmbedding, limit)
-				if len(ranked) == 0 {
-					for _, c := range trimChunks(lexicalChunks, limit) {
-						hits = append(hits, compactMCPSearchHit(map[string]any{"source": "chunk", "id": c.ID, "codebase_id": c.CodebaseID, "file_path": c.FilePath, "name": c.Name, "kind": c.Kind, "start_line": c.StartLine, "end_line": c.EndLine, "snippet": c.Snippet}))
-					}
-					break
-				}
-				for _, r := range ranked {
-					r["source"] = "chunk"
-					hits = append(hits, compactMCPSearchHit(r))
-				}
 			}
 
-			// Emit warning that fallback was used
-			if warning == "" {
-				warning = "FTS5 index unavailable; using in-memory fallback"
-			}
+			warning = "FTS5 index unavailable; using in-memory fallback"
 		}
 	}
 
@@ -1253,31 +1008,18 @@ func mcpSearch(ctx context.Context, conn *sql.DB, args map[string]any) (map[stri
 	}
 
 	result := map[string]any{
-		"source":         source,
-		"mode_requested": mode,
-		"mode_used":      mode,
-		"results":        hits,
+		"source":    source,
+		"mode_used": "lexical",
+		"results":   hits,
+	}
+	if usedLikeFallback {
+		result["mode_used"] = "like_fallback"
 	}
 	if workspaceID > 0 {
 		result["workspace_id"] = workspaceID
 	}
 	if codebaseID > 0 && (source == "memories" || source == "both") {
 		result["memory_codebase_scope"] = codebaseID
-	}
-	if source == "chunks" || source == "both" {
-		if usedLikeFallback {
-			result["mode_used"] = "like_fallback"
-		} else if mode != "lexical" && len(queryEmbedding) == 0 {
-			result["mode_used"] = "lexical"
-			if warning == "" {
-				warning = "query_embedding missing and embedding provider unavailable; using lexical fallback"
-			}
-		}
-	} else if mode != "lexical" && len(queryEmbedding) == 0 {
-		result["mode_used"] = "lexical"
-		if warning == "" {
-			warning = "query_embedding missing and embedding provider unavailable; using lexical fallback"
-		}
 	}
 	if warning != "" {
 		result["warning"] = warning
@@ -1313,7 +1055,6 @@ func mcpIndexCodebase(ctx context.Context, conn *sql.DB, args map[string]any) (m
 	codebaseID := toInt64(args["codebase_id"], 0)
 	codebasePath := strings.TrimSpace(toString(args["codebase_path"]))
 	linesPerChunk := toInt(args["lines_per_chunk"], 50)
-	generateEmbed := toBool(args["embed"], false)
 	incremental := toBool(args["incremental"], false)
 	if codebaseID <= 0 || codebasePath == "" {
 		return nil, errors.New("codebase_id and codebase_path are required")
@@ -1323,26 +1064,6 @@ func mcpIndexCodebase(ctx context.Context, conn *sql.DB, args map[string]any) (m
 
 	chunkRepo := store.NewChunkRepo(conn)
 	indexedFileRepo := store.NewIndexedFileRepo(conn)
-
-	var provider embed.Provider
-	var embedWarning string
-	if generateEmbed {
-		var err error
-		provider, err = embed.NewProviderFromRuntime(rootCfg)
-		if err != nil {
-			embedWarning = err.Error()
-			provider = nil
-		}
-	}
-
-	// Initialize embedding pipeline for marking new chunks as pending
-	var embeddingPipeline *search.EmbeddingPipeline
-	if provider != nil {
-		ep, epErr := search.NewEmbeddingPipeline(conn, provider, mcpLogger)
-		if epErr == nil {
-			embeddingPipeline = ep
-		}
-	}
 
 	// Incremental mode: only re-index changed files
 	if incremental {
@@ -1378,7 +1099,6 @@ func mcpIndexCodebase(ctx context.Context, conn *sql.DB, args map[string]any) (m
 					continue
 				}
 
-				var pendingChunkIDs []int64
 				fileChunkCount := 0
 				for _, c := range fileResult.Chunks {
 					chunkData := store.ChunkData{
@@ -1394,37 +1114,11 @@ func mcpIndexCodebase(ctx context.Context, conn *sql.DB, args map[string]any) (m
 						FileHash:  c.FileHash,
 						IndexedAt: indexedAt,
 					}
-					if generateEmbed && provider != nil {
-						emb, embErr := provider.Embed(ctx, c.Snippet)
-						if embErr == nil {
-							chunkData.Embedding = emb
-							chunkData.EmbeddingModel = provider.ModelName()
-						} else {
-							indexEmbedFailures++
-						}
-					}
-					chunkID, createErr := chunkRepo.CreateReturningID(ctx, codebaseID, chunkData)
-					if createErr != nil {
+					if _, createErr := chunkRepo.CreateReturningID(ctx, codebaseID, chunkData); createErr != nil {
 						return nil, createErr
-					}
-					// Track chunks that need embedding if no embedding was provided
-					if generateEmbed && provider != nil && len(chunkData.Embedding) == 0 {
-						pendingChunkIDs = append(pendingChunkIDs, chunkID)
 					}
 					fileChunkCount++
 					totalChunks++
-				}
-
-				// Mark chunks as pending embedding within a transaction
-				if len(pendingChunkIDs) > 0 && embeddingPipeline != nil {
-					tx, txErr := conn.BeginTx(ctx, nil)
-					if txErr == nil {
-						if markErr := embeddingPipeline.MarkPendingEmbedding(ctx, tx, pendingChunkIDs); markErr != nil {
-							_ = tx.Rollback()
-						} else {
-							_ = tx.Commit()
-						}
-					}
 				}
 
 				// Update indexed_files with new hash and status
@@ -1451,21 +1145,16 @@ func mcpIndexCodebase(ctx context.Context, conn *sql.DB, args map[string]any) (m
 
 			totalFiles := len(delta.Changed) + len(delta.Added) + len(delta.Removed) + len(delta.Unchanged)
 			result := map[string]any{
-				"codebase_id":       codebaseID,
-				"total_files":       totalFiles,
-				"files_indexed":     len(delta.Changed) + len(delta.Added),
-				"files_skipped":     len(delta.Unchanged),
-				"files_changed":     len(delta.Changed),
-				"files_added":       len(delta.Added),
-				"files_removed":     len(delta.Removed),
-				"total_chunks":      totalChunks,
-				"indexed_at":        indexedAt,
-				"embedding_enabled": generateEmbed && provider != nil,
-				"incremental":       true,
-			}
-			if embedWarning != "" {
-				result["warning"] = embedWarning
-				result["mode_used"] = "lexical_only"
+				"codebase_id":   codebaseID,
+				"total_files":   totalFiles,
+				"files_indexed": len(delta.Changed) + len(delta.Added),
+				"files_skipped": len(delta.Unchanged),
+				"files_changed": len(delta.Changed),
+				"files_added":   len(delta.Added),
+				"files_removed": len(delta.Removed),
+				"total_chunks":  totalChunks,
+				"indexed_at":    indexedAt,
+				"incremental":   true,
 			}
 			if mcpMetrics != nil {
 				mcpMetrics.RecordIndexRun(int64(totalFiles), int64(totalChunks), indexEmbedFailures, time.Since(indexStartTime).Milliseconds())
@@ -1491,7 +1180,6 @@ func mcpIndexCodebase(ctx context.Context, conn *sql.DB, args map[string]any) (m
 	totalChunks := 0
 	indexedAt := time.Now().Unix()
 	for relPath, fileResult := range fileResults {
-		var pendingChunkIDs []int64
 		fileChunkCount := 0
 		for _, c := range fileResult.Chunks {
 			chunkData := store.ChunkData{
@@ -1507,37 +1195,11 @@ func mcpIndexCodebase(ctx context.Context, conn *sql.DB, args map[string]any) (m
 				FileHash:  c.FileHash,
 				IndexedAt: indexedAt,
 			}
-			if generateEmbed && provider != nil {
-				emb, embErr := provider.Embed(ctx, c.Snippet)
-				if embErr == nil {
-					chunkData.Embedding = emb
-					chunkData.EmbeddingModel = provider.ModelName()
-				} else {
-					indexEmbedFailures++
-				}
-			}
-			chunkID, createErr := chunkRepo.CreateReturningID(ctx, codebaseID, chunkData)
-			if createErr != nil {
+			if _, createErr := chunkRepo.CreateReturningID(ctx, codebaseID, chunkData); createErr != nil {
 				return nil, createErr
-			}
-			// Track chunks that need embedding if no embedding was provided
-			if generateEmbed && provider != nil && len(chunkData.Embedding) == 0 {
-				pendingChunkIDs = append(pendingChunkIDs, chunkID)
 			}
 			fileChunkCount++
 			totalChunks++
-		}
-
-		// Mark chunks as pending embedding within a transaction
-		if len(pendingChunkIDs) > 0 && embeddingPipeline != nil {
-			tx, txErr := conn.BeginTx(ctx, nil)
-			if txErr == nil {
-				if markErr := embeddingPipeline.MarkPendingEmbedding(ctx, tx, pendingChunkIDs); markErr != nil {
-					_ = tx.Rollback()
-				} else {
-					_ = tx.Commit()
-				}
-			}
 		}
 
 		// Record manifest entry for this file with status
@@ -1552,57 +1214,18 @@ func mcpIndexCodebase(ctx context.Context, conn *sql.DB, args map[string]any) (m
 	}
 
 	result := map[string]any{
-		"codebase_id":       codebaseID,
-		"total_files":       len(fileResults),
-		"files_indexed":     len(fileResults),
-		"total_chunks":      totalChunks,
-		"indexed_at":        indexedAt,
-		"embedding_enabled": generateEmbed && provider != nil,
-		"incremental":       false,
-	}
-	if embedWarning != "" {
-		result["warning"] = embedWarning
-		result["mode_used"] = "lexical_only"
+		"codebase_id":   codebaseID,
+		"total_files":   len(fileResults),
+		"files_indexed": len(fileResults),
+		"total_chunks":  totalChunks,
+		"indexed_at":    indexedAt,
+		"incremental":   false,
 	}
 	if mcpMetrics != nil {
 		mcpMetrics.RecordIndexRun(int64(len(fileResults)), int64(totalChunks), indexEmbedFailures, time.Since(indexStartTime).Milliseconds())
 	}
 
 	return mcpToolTextResult(result), nil
-}
-
-func parseMCPQueryEmbeddingArg(v any) ([]float32, error) {
-	if v == nil {
-		return nil, nil
-	}
-
-	switch t := v.(type) {
-	case string:
-		if strings.TrimSpace(t) == "" {
-			return nil, nil
-		}
-		return parseEmbeddingCSV(t)
-	case []any:
-		out := make([]float32, 0, len(t))
-		for _, item := range t {
-			switch n := item.(type) {
-			case float64:
-				out = append(out, float32(n))
-			case int:
-				out = append(out, float32(n))
-			case int64:
-				out = append(out, float32(n))
-			default:
-				return nil, errors.New("query_embedding array must contain only numbers")
-			}
-		}
-		if len(out) == 0 {
-			return nil, nil
-		}
-		return out, nil
-	default:
-		return nil, errors.New("query_embedding must be either CSV string or numeric array")
-	}
 }
 
 func mcpIndexStatus(ctx context.Context, conn *sql.DB, args map[string]any) (map[string]any, error) {
@@ -1612,23 +1235,21 @@ func mcpIndexStatus(ctx context.Context, conn *sql.DB, args map[string]any) (map
 	}
 
 	var chunkCount int64
-	var withEmbeddings int64
 	var latestIndexedAt sql.NullInt64
 
 	err := conn.QueryRowContext(ctx,
-		"SELECT COUNT(*), COUNT(embedding), MAX(indexed_at) FROM chunks WHERE codebase_id = ?",
+		"SELECT COUNT(*), MAX(indexed_at) FROM chunks WHERE codebase_id = ?",
 		codebaseID,
-	).Scan(&chunkCount, &withEmbeddings, &latestIndexedAt)
+	).Scan(&chunkCount, &latestIndexedAt)
 	if err != nil {
 		return nil, err
 	}
 
 	return mcpToolTextResult(map[string]any{
-		"codebase_id":            codebaseID,
-		"chunk_count":            chunkCount,
-		"chunks_with_embeddings": withEmbeddings,
-		"indexed_at":             latestIndexedAt.Int64,
-		"indexed":                chunkCount > 0,
+		"codebase_id": codebaseID,
+		"chunk_count": chunkCount,
+		"indexed_at":  latestIndexedAt.Int64,
+		"indexed":     chunkCount > 0,
 	}), nil
 }
 
@@ -1667,8 +1288,8 @@ func mcpMemoryUpsert(ctx context.Context, conn *sql.DB, args map[string]any) (ma
 	}
 
 	if _, err := conn.ExecContext(ctx, `
-		INSERT INTO memories (id, content, embedding, category, workspace_id, codebase_id, created_at, source_task)
-		VALUES (?, ?, NULL, ?, ?, ?, ?, ?)
+		INSERT INTO memories (id, content, category, workspace_id, codebase_id, created_at, source_task)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			content = excluded.content,
 			category = excluded.category,
@@ -1748,7 +1369,6 @@ func mcpToolTextResult(v any) map[string]any {
 func mcpAnalyzeCodebase(ctx context.Context, conn *sql.DB, args map[string]any) (map[string]any, error) {
 	codebaseID := toInt64(args["codebase_id"], 0)
 	codebasePath := strings.TrimSpace(toString(args["codebase_path"]))
-	generateEmbed := toBool(args["embed"], false)
 	incremental := toBool(args["incremental"], false)
 	if codebaseID <= 0 || codebasePath == "" {
 		return nil, errors.New("codebase_id and codebase_path are required")
@@ -1758,15 +1378,6 @@ func mcpAnalyzeCodebase(ctx context.Context, conn *sql.DB, args map[string]any) 
 	edgeRepo := store.NewEdgeRepo(conn)
 	sfRepo := store.NewSourceFileRepo(conn)
 	indexedFileRepo := store.NewIndexedFileRepo(conn)
-
-	var provider embed.Provider
-	if generateEmbed {
-		var err error
-		provider, err = embed.NewProviderFromRuntime(rootCfg)
-		if err != nil {
-			provider = nil
-		}
-	}
 
 	// Construct plugin registry for this analyze run
 	pluginDirs := parse.PluginDirectories()
@@ -1884,16 +1495,6 @@ func mcpAnalyzeCodebase(ctx context.Context, conn *sql.DB, args map[string]any) 
 						StartLine: sym.StartLine, EndLine: sym.EndLine,
 						FileHash: sym.FileHash, IndexedAt: indexedAt,
 					}
-					if provider != nil {
-						text := sym.Signature
-						if sym.DocComment != "" {
-							text += "\n" + sym.DocComment
-						}
-						if emb, embErr := provider.Embed(ctx, text); embErr == nil {
-							sd.Embedding = emb
-							sd.EmbeddingModel = provider.ModelName()
-						}
-					}
 					if err := symbolRepo.Create(ctx, codebaseID, sd); err != nil {
 						recordWriteError(err, "create symbol "+sym.QualifiedName)
 						continue
@@ -1936,7 +1537,6 @@ func mcpAnalyzeCodebase(ctx context.Context, conn *sql.DB, args map[string]any) 
 				"symbols_extracted": totalSymbols,
 				"edges_extracted":   totalEdges,
 				"indexed_at":        indexedAt,
-				"embed_enabled":     provider != nil,
 				"incremental":       true,
 			}
 			appendWriteErrorSummary(result)
@@ -2028,16 +1628,6 @@ func mcpAnalyzeCodebase(ctx context.Context, conn *sql.DB, args map[string]any) 
 				StartLine: sym.StartLine, EndLine: sym.EndLine,
 				FileHash: sym.FileHash, IndexedAt: indexedAt,
 			}
-			if provider != nil {
-				text := sym.Signature
-				if sym.DocComment != "" {
-					text += "\n" + sym.DocComment
-				}
-				if emb, embErr := provider.Embed(ctx, text); embErr == nil {
-					sd.Embedding = emb
-					sd.EmbeddingModel = provider.ModelName()
-				}
-			}
 			if err := symbolRepo.Create(ctx, codebaseID, sd); err != nil {
 				recordWriteError(err, "create symbol "+sym.QualifiedName)
 				continue
@@ -2061,10 +1651,12 @@ func mcpAnalyzeCodebase(ctx context.Context, conn *sql.DB, args map[string]any) 
 	recordWriteError(mcpResolveCrossRepoLinks(ctx, conn, codebaseID), "resolve cross-repo links")
 
 	result := map[string]any{
-		"codebase_id": codebaseID, "files_analyzed": totalFiles,
-		"symbols_extracted": totalSymbols, "edges_extracted": totalEdges,
-		"indexed_at": indexedAt, "embed_enabled": provider != nil,
-		"incremental": false,
+		"codebase_id":       codebaseID,
+		"files_analyzed":    totalFiles,
+		"symbols_extracted": totalSymbols,
+		"edges_extracted":   totalEdges,
+		"indexed_at":        indexedAt,
+		"incremental":       false,
 	}
 	appendWriteErrorSummary(result)
 	if mcpMetrics != nil {
@@ -2564,130 +2156,8 @@ func mcpProjectOverview(ctx context.Context, conn *sql.DB, args map[string]any) 
 	}), nil
 }
 
-func mcpSemanticSearch(ctx context.Context, conn *sql.DB, args map[string]any) (map[string]any, error) {
-	// Parse required parameters
-	query := strings.TrimSpace(toString(args["query"]))
-	if query == "" {
-		return nil, errors.New("query is required")
-	}
-
-	codebaseID := toInt64(args["codebase_id"], 0)
-	if codebaseID <= 0 {
-		return nil, errors.New("codebase_id is required")
-	}
-
-	// Parse optional parameters
-	limit := toInt(args["limit"], 10)
-	if limit <= 0 {
-		limit = 10
-	}
-	includeBlastRadius := toBool(args["include_blast_radius"], false)
-
-	// Resolve query embedding
-	var queryEmbedding []float32
-
-	queryEmbedding, err := parseMCPQueryEmbeddingArg(args["query_embedding"])
-	if err != nil {
-		return nil, err
-	}
-
-	var embeddingModel string
-
-	if len(queryEmbedding) == 0 {
-		// No pre-computed embedding provided; resolve via provider
-		provider, provErr := sessionEmbeddingProvider(rootCfg)
-		if provErr != nil {
-			return nil, fmt.Errorf("embedding provider error: %w", provErr)
-		}
-
-		vec, embErr := provider.Embed(ctx, query)
-		if embErr != nil {
-			if errors.Is(embErr, embed.ErrProviderNotConfigured) {
-				return nil, errors.New("embedding provider is required for semantic search; either configure a provider or supply query_embedding")
-			}
-			return nil, fmt.Errorf("embedding provider %q returned error: %w", provider.ModelName(), embErr)
-		}
-		queryEmbedding = vec
-		embeddingModel = provider.ModelName()
-	}
-
-	// Load symbols with embeddings
-	symbolRepo := store.NewSymbolRepo(conn)
-	symbols, err := symbolRepo.ListWithEmbeddings(ctx, codebaseID, -1)
-	if err != nil {
-		return nil, fmt.Errorf("load symbols: %w", err)
-	}
-
-	if len(symbols) == 0 {
-		result := map[string]any{
-			"results":       []any{},
-			"query":         query,
-			"codebase_id":   codebaseID,
-			"total_results": 0,
-			"warning":       "codebase has no symbol embeddings; re-run analyze_codebase with embed: true",
-		}
-		return mcpToolTextResult(result), nil
-	}
-
-	// Determine embedding model from stored symbols if not set from provider
-	if embeddingModel == "" && symbols[0].EmbeddingModel != "" {
-		embeddingModel = symbols[0].EmbeddingModel
-	}
-
-	// Validate dimension match
-	storedDim := len(symbols[0].Embedding)
-	queryDim := len(queryEmbedding)
-	if storedDim != queryDim {
-		return nil, fmt.Errorf("query_embedding has %d dimensions but stored embeddings have %d dimensions", queryDim, storedDim)
-	}
-
-	// Rank symbols by cosine similarity
-	hits := search.RankSymbolsByCosine(symbols, queryEmbedding, limit)
-
-	// Build results
-	results := make([]map[string]any, 0, len(hits))
-	edgeRepo := store.NewEdgeRepo(conn)
-
-	for _, hit := range hits {
-		entry := map[string]any{
-			"name":           hit.Symbol.Name,
-			"qualified_name": hit.Symbol.QualifiedName,
-			"kind":           hit.Symbol.Kind,
-			"file_path":      hit.Symbol.FilePath,
-			"start_line":     hit.Symbol.StartLine,
-			"end_line":       hit.Symbol.EndLine,
-			"signature":      hit.Symbol.Signature,
-			"doc_comment":    hit.Symbol.DocComment,
-			"score":          hit.Score,
-		}
-
-		if includeBlastRadius {
-			br, brErr := search.ComputeBlastRadius(ctx, edgeRepo, codebaseID, hit.Symbol)
-			if brErr != nil {
-				return nil, fmt.Errorf("compute blast radius for %q: %w", hit.Symbol.QualifiedName, brErr)
-			}
-			entry["blast_radius"] = br
-		}
-
-		results = append(results, compactMCPSearchHit(entry))
-	}
-
-	// Annotate results from degraded files.
-	annotateDegradedHits(ctx, conn, codebaseID, results)
-
-	response := map[string]any{
-		"results":         results,
-		"query":           query,
-		"codebase_id":     codebaseID,
-		"total_results":   len(results),
-		"embedding_model": embeddingModel,
-	}
-
-	return mcpToolTextResult(response), nil
-}
-
-// mcpResolveCodeQuery orchestrates five sub-queries in parallel (find_symbol,
-// semantic_search, get_callers, get_callees, find_usages) and merges results
+// mcpResolveCodeQuery orchestrates four sub-queries in parallel (find_symbol,
+// get_callers, get_callees, find_usages) and merges results
 // into a single structured response. Individual sub-query failures are captured
 // as error annotations rather than failing the entire call.
 func mcpResolveCodeQuery(ctx context.Context, conn *sql.DB, args map[string]any) (map[string]any, error) {
@@ -2705,11 +2175,10 @@ func mcpResolveCodeQuery(ctx context.Context, conn *sql.DB, args map[string]any)
 
 	// Prepare response sections.
 	var (
-		matchedSymbols     any
-		semanticCandidates any
-		callers            any
-		callees            any
-		usages             any
+		matchedSymbols any
+		callers        any
+		callees        any
+		usages         any
 	)
 
 	errMap := make(map[string]string)
@@ -2717,7 +2186,6 @@ func mcpResolveCodeQuery(ctx context.Context, conn *sql.DB, args map[string]any)
 
 	// Build sub-query argument maps.
 	findSymbolArgs := map[string]any{"name": query, "codebase_id": codebaseID}
-	semanticArgs := map[string]any{"query": query, "codebase_id": codebaseID, "limit": 10}
 	findUsagesArgs := map[string]any{"name": query, "codebase_id": codebaseID}
 	getCallersArgs := map[string]any{"name": query, "codebase_id": codebaseID}
 
@@ -2728,7 +2196,7 @@ func mcpResolveCodeQuery(ctx context.Context, conn *sql.DB, args map[string]any)
 	}
 
 	var wg sync.WaitGroup
-	wg.Add(5)
+	wg.Add(4)
 
 	// 1. find_symbol
 	go func() {
@@ -2744,21 +2212,7 @@ func mcpResolveCodeQuery(ctx context.Context, conn *sql.DB, args map[string]any)
 		}
 	}()
 
-	// 2. semantic_search
-	go func() {
-		defer wg.Done()
-		result, err := mcpSemanticSearch(ctx, conn, semanticArgs)
-		mu.Lock()
-		defer mu.Unlock()
-		if err != nil {
-			errMap["semantic_search"] = err.Error()
-			semanticCandidates = []any{}
-		} else {
-			semanticCandidates = extractStructuredField(result, "results", []any{})
-		}
-	}()
-
-	// 3. get_callers
+	// 2. get_callers
 	go func() {
 		defer wg.Done()
 		result, err := mcpGetCallers(ctx, conn, getCallersArgs)
@@ -2772,7 +2226,7 @@ func mcpResolveCodeQuery(ctx context.Context, conn *sql.DB, args map[string]any)
 		}
 	}()
 
-	// 4. get_callees — requires codebase_id and qualified_name; use query as qualified_name
+	// 3. get_callees — requires codebase_id and qualified_name; use query as qualified_name
 	go func() {
 		defer wg.Done()
 		calleesArgs := map[string]any{"codebase_id": codebaseID, "qualified_name": query}
@@ -2787,7 +2241,7 @@ func mcpResolveCodeQuery(ctx context.Context, conn *sql.DB, args map[string]any)
 		}
 	}()
 
-	// 5. find_usages
+	// 4. find_usages
 	go func() {
 		defer wg.Done()
 		result, err := mcpFindUsages(ctx, conn, findUsagesArgs)
@@ -2804,11 +2258,10 @@ func mcpResolveCodeQuery(ctx context.Context, conn *sql.DB, args map[string]any)
 	wg.Wait()
 
 	response := map[string]any{
-		"matched_symbols":     matchedSymbols,
-		"semantic_candidates": semanticCandidates,
-		"callers":             callers,
-		"callees":             callees,
-		"usages":              usages,
+		"matched_symbols": matchedSymbols,
+		"callers":         callers,
+		"callees":         callees,
+		"usages":          usages,
 	}
 
 	if len(errMap) > 0 {
@@ -2980,46 +2433,6 @@ func mcpServerStats(ctx context.Context, conn *sql.DB, args map[string]any) (map
 	}
 
 	return mcpToolTextResult(result), nil
-}
-
-func rankChunksByCosine(chunks []store.Chunk, queryEmbedding []float32, limit int) []map[string]any {
-	type scored struct {
-		chunk store.Chunk
-		score float64
-	}
-	scoredItems := make([]scored, 0, len(chunks))
-	for _, c := range chunks {
-		if len(c.Embedding) == 0 {
-			continue
-		}
-		scoredItems = append(scoredItems, scored{chunk: c, score: search.CosineSimilarity(c.Embedding, queryEmbedding)})
-	}
-	if len(scoredItems) == 0 {
-		return nil
-	}
-
-	sort.Slice(scoredItems, func(i, j int) bool {
-		return scoredItems[i].score > scoredItems[j].score
-	})
-
-	if limit <= 0 || limit > len(scoredItems) {
-		limit = len(scoredItems)
-	}
-	out := make([]map[string]any, 0, limit)
-	for _, s := range scoredItems[:limit] {
-		out = append(out, map[string]any{
-			"score":       s.score,
-			"id":          s.chunk.ID,
-			"file_path":   s.chunk.FilePath,
-			"name":        s.chunk.Name,
-			"kind":        s.chunk.Kind,
-			"start_line":  s.chunk.StartLine,
-			"end_line":    s.chunk.EndLine,
-			"snippet":     s.chunk.Snippet,
-			"codebase_id": s.chunk.CodebaseID,
-		})
-	}
-	return out
 }
 
 func trimChunks(in []store.Chunk, limit int) []store.Chunk {

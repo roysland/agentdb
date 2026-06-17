@@ -94,11 +94,6 @@ func MigrateSchema(ctx context.Context, db *sql.DB) error {
 		return fmt.Errorf("migrate indexed_files table: %w", err)
 	}
 
-	// Migration 5: Add embedding_status column to chunks table (Req 1.7).
-	if err := migrateChunksEmbeddingStatus(ctx, db); err != nil {
-		return fmt.Errorf("migrate chunks.embedding_status: %w", err)
-	}
-
 	// Migration 6: Add index_status and status_reason columns to indexed_files (Req 4.9).
 	if err := migrateIndexedFilesStatus(ctx, db); err != nil {
 		return fmt.Errorf("migrate indexed_files status columns: %w", err)
@@ -376,30 +371,6 @@ func migrateMemoriesScopeColumns(ctx context.Context, db *sql.DB) error {
 	_, err = db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_memories_scope_created ON memories(workspace_id, codebase_id, created_at DESC)`)
 	if err != nil {
 		return fmt.Errorf("create index idx_memories_scope_created: %w", err)
-	}
-
-	return nil
-}
-
-// migrateChunksEmbeddingStatus adds the embedding_status column to the chunks table
-// if it doesn't already exist. This supports the embedding pipeline status tracking.
-func migrateChunksEmbeddingStatus(ctx context.Context, db *sql.DB) error {
-	exists, err := columnExists(ctx, db, "chunks", "embedding_status")
-	if err != nil {
-		return err
-	}
-	if exists {
-		return nil
-	}
-
-	_, err = db.ExecContext(ctx, `ALTER TABLE chunks ADD COLUMN embedding_status TEXT NOT NULL DEFAULT 'complete'`)
-	if err != nil {
-		return fmt.Errorf("alter table chunks add embedding_status: %w", err)
-	}
-
-	_, err = db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_chunks_embedding_status ON chunks(embedding_status)`)
-	if err != nil {
-		return fmt.Errorf("create index on chunks.embedding_status: %w", err)
 	}
 
 	return nil

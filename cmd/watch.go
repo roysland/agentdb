@@ -11,7 +11,6 @@ import (
 
 	"github.com/roysland/agentdb/internal/config"
 	"github.com/roysland/agentdb/internal/db"
-	"github.com/roysland/agentdb/internal/embed"
 	"github.com/roysland/agentdb/internal/observe"
 	"github.com/roysland/agentdb/internal/store"
 	"github.com/roysland/agentdb/internal/watch"
@@ -43,29 +42,13 @@ func newWatchCmd(ctx context.Context) *cobra.Command {
 				return err
 			}
 
-			// Default --analyze to true when embedding is configured: changed files
-			// would otherwise lose their symbol embeddings on every re-index cycle.
-			if !cmd.Flags().Changed("analyze") && resolved.EmbeddingProvider != "disabled" {
-				analyze = true
-			}
-
-			// Set up embedding provider (nil when disabled or unavailable).
-			var embedProvider embed.Provider
-			if resolved.EmbeddingProvider != "disabled" {
-				embedProvider, err = embed.NewProviderFromRuntime(resolved)
-				if err != nil {
-					_, _ = fmt.Fprintf(os.Stderr, "warning: embedding provider unavailable (%s), watching without embeddings\n", err)
-				}
-			}
-
 			logger := observe.NewLogger(observe.LevelInfo, os.Stderr)
 
 			cfg := watch.Config{
-				CodebaseID:    resolvedID,
-				CodebasePath:  resolvedPath,
-				DebounceMs:    debounceMs,
-				Analyze:       analyze,
-				EmbedProvider: embedProvider,
+				CodebaseID:   resolvedID,
+				CodebasePath: resolvedPath,
+				DebounceMs:   debounceMs,
+				Analyze:      analyze,
 			}
 
 			watcher, err := watch.New(cfg, dbConn, logger)

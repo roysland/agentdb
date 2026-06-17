@@ -25,26 +25,6 @@ func LoadDefaultLinesPerChunk() int {
 	return loadFirstConfigIntValue("AGENTDB_LINES_PER_CHUNK")
 }
 
-func LoadDefaultEmbedProvider() string {
-	return loadFirstConfigValue("AGENTDB_EMBED_PROVIDER")
-}
-
-func LoadDefaultEmbedBaseURL() string {
-	return loadFirstConfigValue("AGENTDB_EMBED_BASE_URL")
-}
-
-func LoadDefaultEmbedAPIKey() string {
-	return loadFirstConfigValue("AGENTDB_EMBED_API_KEY")
-}
-
-func LoadDefaultEmbedModel() string {
-	return loadFirstConfigValue("AGENTDB_EMBED_MODEL")
-}
-
-func LoadDefaultEmbedTimeoutSeconds() int {
-	return loadFirstConfigIntValue("AGENTDB_EMBED_TIMEOUT_SECONDS")
-}
-
 // expandTilde replaces a leading ~ with the user's home directory.
 func expandTilde(path string) string {
 	if path == "~" {
@@ -88,15 +68,6 @@ func loadConfigValue(key string) string {
 		return ""
 	}
 	return expandTilde(strings.TrimSpace(val))
-}
-
-func loadFirstConfigValue(keys ...string) string {
-	for _, key := range keys {
-		if val := loadConfigValue(key); val != "" {
-			return val
-		}
-	}
-	return ""
 }
 
 func loadFirstConfigIntValue(keys ...string) int {

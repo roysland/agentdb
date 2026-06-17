@@ -11,38 +11,34 @@ import (
 )
 
 const createChunk = `-- name: CreateChunk :exec
-INSERT INTO chunks (codebase_id, file_path, chunk_key, language, kind, name, signature, snippet, start_line, end_line, file_hash, indexed_at, embedding, embedding_model)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO chunks (codebase_id, file_path, chunk_key, language, kind, name, signature, snippet, start_line, end_line, file_hash, indexed_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(codebase_id, chunk_key) DO UPDATE SET
-    file_path       = excluded.file_path,
-    language        = excluded.language,
-    kind            = excluded.kind,
-    name            = excluded.name,
-    signature       = excluded.signature,
-    snippet         = excluded.snippet,
-    start_line      = excluded.start_line,
-    end_line        = excluded.end_line,
-    file_hash       = excluded.file_hash,
-    indexed_at      = excluded.indexed_at,
-    embedding       = excluded.embedding,
-    embedding_model = excluded.embedding_model
+    file_path  = excluded.file_path,
+    language   = excluded.language,
+    kind       = excluded.kind,
+    name       = excluded.name,
+    signature  = excluded.signature,
+    snippet    = excluded.snippet,
+    start_line = excluded.start_line,
+    end_line   = excluded.end_line,
+    file_hash  = excluded.file_hash,
+    indexed_at = excluded.indexed_at
 `
 
 type CreateChunkParams struct {
-	CodebaseID     int64
-	FilePath       string
-	ChunkKey       string
-	Language       string
-	Kind           string
-	Name           string
-	Signature      string
-	Snippet        string
-	StartLine      int64
-	EndLine        int64
-	FileHash       string
-	IndexedAt      int64
-	Embedding      interface{}
-	EmbeddingModel sql.NullString
+	CodebaseID int64
+	FilePath   string
+	ChunkKey   string
+	Language   string
+	Kind       string
+	Name       string
+	Signature  string
+	Snippet    string
+	StartLine  int64
+	EndLine    int64
+	FileHash   string
+	IndexedAt  int64
 }
 
 func (q *Queries) CreateChunk(ctx context.Context, arg CreateChunkParams) error {
@@ -59,21 +55,18 @@ func (q *Queries) CreateChunk(ctx context.Context, arg CreateChunkParams) error 
 		arg.EndLine,
 		arg.FileHash,
 		arg.IndexedAt,
-		arg.Embedding,
-		arg.EmbeddingModel,
 	)
 	return err
 }
 
 const createMemory = `-- name: CreateMemory :exec
-INSERT INTO memories (id, content, embedding, category, workspace_id, codebase_id, created_at, source_task)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO memories (id, content, category, workspace_id, codebase_id, created_at, source_task)
+VALUES (?, ?, ?, ?, ?, ?, ?)
 `
 
 type CreateMemoryParams struct {
 	ID          string
 	Content     string
-	Embedding   interface{}
 	Category    string
 	WorkspaceID sql.NullInt64
 	CodebaseID  sql.NullInt64
@@ -85,7 +78,6 @@ func (q *Queries) CreateMemory(ctx context.Context, arg CreateMemoryParams) erro
 	_, err := q.db.ExecContext(ctx, createMemory,
 		arg.ID,
 		arg.Content,
-		arg.Embedding,
 		arg.Category,
 		arg.WorkspaceID,
 		arg.CodebaseID,
@@ -117,7 +109,7 @@ func (q *Queries) DeleteMemoryByID(ctx context.Context, id string) (int64, error
 }
 
 const getChunksByCodebase = `-- name: GetChunksByCodebase :many
-SELECT id, codebase_id, file_path, chunk_key, language, kind, name, signature, snippet, start_line, end_line, file_hash, indexed_at, embedding, embedding_model, embedding_status
+SELECT id, codebase_id, file_path, chunk_key, language, kind, name, signature, snippet, start_line, end_line, file_hash, indexed_at
 FROM chunks
 WHERE codebase_id = ?
 ORDER BY file_path, start_line
@@ -146,9 +138,6 @@ func (q *Queries) GetChunksByCodebase(ctx context.Context, codebaseID int64) ([]
 			&i.EndLine,
 			&i.FileHash,
 			&i.IndexedAt,
-			&i.Embedding,
-			&i.EmbeddingModel,
-			&i.EmbeddingStatus,
 		); err != nil {
 			return nil, err
 		}
@@ -164,7 +153,7 @@ func (q *Queries) GetChunksByCodebase(ctx context.Context, codebaseID int64) ([]
 }
 
 const getMemoryByID = `-- name: GetMemoryByID :one
-SELECT id, content, embedding, category, workspace_id, codebase_id, created_at, last_retrieved, retrieval_count, source_task
+SELECT id, content, category, workspace_id, codebase_id, created_at, last_retrieved, retrieval_count, source_task
 FROM memories
 WHERE id = ?
 `
@@ -175,7 +164,6 @@ func (q *Queries) GetMemoryByID(ctx context.Context, id string) (Memory, error) 
 	err := row.Scan(
 		&i.ID,
 		&i.Content,
-		&i.Embedding,
 		&i.Category,
 		&i.WorkspaceID,
 		&i.CodebaseID,
@@ -222,7 +210,7 @@ func (q *Queries) ListCodebases(ctx context.Context) ([]Codebasis, error) {
 }
 
 const listMemoriesFiltered = `-- name: ListMemoriesFiltered :many
-SELECT id, content, embedding, category, workspace_id, codebase_id, created_at, last_retrieved, retrieval_count, source_task
+SELECT id, content, category, workspace_id, codebase_id, created_at, last_retrieved, retrieval_count, source_task
 FROM memories
 WHERE (?1 = '' OR category = ?1)
 	AND (?2 IS NULL OR workspace_id = ?2)
@@ -255,64 +243,6 @@ func (q *Queries) ListMemoriesFiltered(ctx context.Context, arg ListMemoriesFilt
 		if err := rows.Scan(
 			&i.ID,
 			&i.Content,
-			&i.Embedding,
-			&i.Category,
-			&i.WorkspaceID,
-			&i.CodebaseID,
-			&i.CreatedAt,
-			&i.LastRetrieved,
-			&i.RetrievalCount,
-			&i.SourceTask,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listMemoriesWithEmbeddingsFiltered = `-- name: ListMemoriesWithEmbeddingsFiltered :many
-SELECT id, content, embedding, category, workspace_id, codebase_id, created_at, last_retrieved, retrieval_count, source_task
-FROM memories
-WHERE embedding IS NOT NULL
-	AND (?1 = '' OR category = ?1)
-	AND (?2 IS NULL OR workspace_id = ?2)
-	AND (?3 IS NULL OR codebase_id = ?3)
-ORDER BY created_at DESC
-LIMIT ?4
-`
-
-type ListMemoriesWithEmbeddingsFilteredParams struct {
-	Category    interface{}
-	WorkspaceID interface{}
-	CodebaseID  interface{}
-	Limit       int64
-}
-
-func (q *Queries) ListMemoriesWithEmbeddingsFiltered(ctx context.Context, arg ListMemoriesWithEmbeddingsFilteredParams) ([]Memory, error) {
-	rows, err := q.db.QueryContext(ctx, listMemoriesWithEmbeddingsFiltered,
-		arg.Category,
-		arg.WorkspaceID,
-		arg.CodebaseID,
-		arg.Limit,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []Memory
-	for rows.Next() {
-		var i Memory
-		if err := rows.Scan(
-			&i.ID,
-			&i.Content,
-			&i.Embedding,
 			&i.Category,
 			&i.WorkspaceID,
 			&i.CodebaseID,
@@ -373,7 +303,7 @@ func (q *Queries) RegisterCodebase(ctx context.Context, arg RegisterCodebasePara
 }
 
 const searchMemoriesLexicalFiltered = `-- name: SearchMemoriesLexicalFiltered :many
-SELECT id, content, embedding, category, workspace_id, codebase_id, created_at, last_retrieved, retrieval_count, source_task
+SELECT id, content, category, workspace_id, codebase_id, created_at, last_retrieved, retrieval_count, source_task
 FROM memories
 WHERE (content LIKE ?1 OR category LIKE ?2)
 	AND (?3 = '' OR category = ?3)
@@ -411,7 +341,6 @@ func (q *Queries) SearchMemoriesLexicalFiltered(ctx context.Context, arg SearchM
 		if err := rows.Scan(
 			&i.ID,
 			&i.Content,
-			&i.Embedding,
 			&i.Category,
 			&i.WorkspaceID,
 			&i.CodebaseID,
@@ -435,13 +364,12 @@ func (q *Queries) SearchMemoriesLexicalFiltered(ctx context.Context, arg SearchM
 
 const updateMemory = `-- name: UpdateMemory :execrows
 UPDATE memories
-SET content = ?, embedding = ?, category = ?, workspace_id = ?, codebase_id = ?, source_task = ?
+SET content = ?, category = ?, workspace_id = ?, codebase_id = ?, source_task = ?
 WHERE id = ?
 `
 
 type UpdateMemoryParams struct {
 	Content     string
-	Embedding   interface{}
 	Category    string
 	WorkspaceID sql.NullInt64
 	CodebaseID  sql.NullInt64
@@ -452,7 +380,6 @@ type UpdateMemoryParams struct {
 func (q *Queries) UpdateMemory(ctx context.Context, arg UpdateMemoryParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, updateMemory,
 		arg.Content,
-		arg.Embedding,
 		arg.Category,
 		arg.WorkspaceID,
 		arg.CodebaseID,

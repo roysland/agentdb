@@ -3,14 +3,12 @@ package search
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"math"
 	"sort"
 	"strings"
 	"sync"
 
-	"github.com/roysland/agentdb/internal/embed"
 	"github.com/roysland/agentdb/internal/observe"
 	"github.com/roysland/agentdb/internal/store"
 )
@@ -45,20 +43,10 @@ type LocateIssueConfig struct {
 	IssueText   string
 	CodebaseIDs []int64
 	Limit       int
-	Provider    embed.Provider // may be nil for lexical-only fallback
-}
-
-// ComputeConfidenceScore calculates the hybrid confidence score from cosine
-// similarity and normalized BM25 score.
-//
-// Formula: confidence_score = clamp(0.6 * cosine_similarity + 0.4 * normalized_bm25, 0.0, 1.0)
-func ComputeConfidenceScore(cosineSimilarity, normalizedBM25 float64) float64 {
-	score := 0.6*cosineSimilarity + 0.4*normalizedBM25
-	return clampFloat64(score, 0.0, 1.0)
 }
 
 // ComputeConfidenceScoreLexicalOnly calculates the confidence score using only
-// the normalized BM25 score when embeddings are unavailable.
+// the normalized BM25 score.
 //
 // Formula: confidence_score = clamp(normalized_bm25, 0.0, 1.0)
 func ComputeConfidenceScoreLexicalOnly(normalizedBM25 float64) float64 {
@@ -147,24 +135,21 @@ func adjustLocateIssueConfidence(c *candidate, baseConfidence float64) float64 {
 
 // candidate is an internal type used during merge and scoring.
 type candidate struct {
-	chunkID     int64
-	filePath    string
-	name        string
-	kind        string
-	snippet     string
-	startLine   int64
-	endLine     int64
-	bm25Score   float64
-	cosineScore float64
-	codebaseID  int64
-	hasVector   bool
+	chunkID    int64
+	filePath   string
+	name       string
+	kind       string
+	snippet    string
+	startLine  int64
+	endLine    int64
+	bm25Score  float64
+	codebaseID int64
 }
 
-// LocateIssue performs hybrid search (FTS5 + optional semantic) and returns
-// ranked candidates enriched with blast radius and matching chunks.
+// LocateIssue performs lexical FTS5 search and returns ranked candidates enriched
+// with blast radius and matching chunks.
 //
-// Returns (results, warning, error) where warning is non-empty when the
-// embedding provider is unavailable and lexical-only fallback is used.
+// Returns (results, warning, error).
 func LocateIssue(ctx context.Context, db *sql.DB, cfg LocateIssueConfig, logger *observe.Logger) ([]LocateIssueResult, string, error) {
 	if cfg.IssueText == "" {
 		return nil, "", fmt.Errorf("locate_issue: issue_text is required")
@@ -183,35 +168,10 @@ func LocateIssue(ctx context.Context, db *sql.DB, cfg LocateIssueConfig, logger 
 		logger.Log(observe.LogEntry{Level: level, Operation: op, Status: msg})
 	}
 
-	// Determine if embedding provider is available.
-	var queryEmbedding []float32
-	var warning string
-	embeddingAvailable := false
-
-	if cfg.Provider != nil {
-		vec, err := cfg.Provider.Embed(ctx, cfg.IssueText)
-		if err != nil {
-			if errors.Is(err, embed.ErrProviderNotConfigured) {
-				warning = "embedding provider unavailable; using lexical-only ranking"
-				logMsg("warn", "locate_issue", warning)
-			} else {
-				// Non-fatal: fall back to lexical-only
-				warning = "embedding provider unavailable; using lexical-only ranking"
-				logMsg("warn", "locate_issue", fmt.Sprintf("embed failed: %v; falling back to lexical-only", err))
-			}
-		} else if len(vec) > 0 {
-			queryEmbedding = vec
-			embeddingAvailable = true
-		}
-	} else {
-		warning = "embedding provider unavailable; using lexical-only ranking"
-		logMsg("warn", "locate_issue", warning)
-	}
-
 	// Execute FTS5 search across all codebase IDs in parallel.
 	fts, err := NewFTS5Search(db, logger)
 	if err != nil {
-		return nil, warning, fmt.Errorf("locate_issue: create fts5 search: %w", err)
+		return nil, "", fmt.Errorf("locate_issue: create fts5 search: %w", err)
 	}
 
 	// Collect FTS5 candidates from all codebases.
@@ -251,42 +211,11 @@ func LocateIssue(ctx context.Context, db *sql.DB, cfg LocateIssueConfig, logger 
 		}(cbID)
 	}
 
-	// Optionally run semantic search in parallel.
-	var semanticHits []SymbolHit
-	var semanticErr error
-	if embeddingAvailable {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			symRepo := store.NewSymbolRepo(db)
-			var allSymbols []store.Symbol
-			for _, cbID := range cfg.CodebaseIDs {
-				syms, err := symRepo.ListWithEmbeddings(ctx, cbID, candidateLimit)
-				if err != nil {
-					mu.Lock()
-					semanticErr = fmt.Errorf("list symbols with embeddings: %w", err)
-					mu.Unlock()
-					logMsg("warn", "locate_issue", fmt.Sprintf("semantic search failed: %v", err))
-					return
-				}
-				allSymbols = append(allSymbols, syms...)
-			}
-			hits := RankSymbolsByCosine(allSymbols, queryEmbedding, candidateLimit)
-			mu.Lock()
-			semanticHits = hits
-			mu.Unlock()
-		}()
-	}
-
 	wg.Wait()
 
-	// If FTS5 failed entirely and no semantic results, return error.
-	if ftsErr != nil && len(ftsResults) == 0 && len(semanticHits) == 0 {
-		return nil, warning, ftsErr
-	}
-	// Log semantic error if it occurred but FTS5 succeeded (non-fatal).
-	if semanticErr != nil {
-		logMsg("warn", "locate_issue", fmt.Sprintf("semantic search partial failure: %v", semanticErr))
+	// If FTS5 failed entirely, return error.
+	if ftsErr != nil && len(ftsResults) == 0 {
+		return nil, "", ftsErr
 	}
 
 	// Merge and deduplicate candidates.
@@ -330,26 +259,6 @@ func LocateIssue(ctx context.Context, db *sql.DB, cfg LocateIssueConfig, logger 
 		}
 	}
 
-	// Add semantic candidates (merge with existing or add new).
-	for _, hit := range semanticHits {
-		key := candidateKey{codebaseID: hit.Symbol.CodebaseID, filePath: hit.Symbol.FilePath, name: hit.Symbol.Name}
-		if existing, ok := candidateMap[key]; ok {
-			existing.cosineScore = hit.Score
-			existing.hasVector = true
-		} else {
-			candidateMap[key] = &candidate{
-				filePath:    hit.Symbol.FilePath,
-				name:        hit.Symbol.Name,
-				kind:        hit.Symbol.Kind,
-				startLine:   hit.Symbol.StartLine,
-				endLine:     hit.Symbol.EndLine,
-				cosineScore: hit.Score,
-				codebaseID:  hit.Symbol.CodebaseID,
-				hasVector:   true,
-			}
-		}
-	}
-
 	// Compute confidence scores.
 	type scoredCandidate struct {
 		candidate  *candidate
@@ -357,13 +266,8 @@ func LocateIssue(ctx context.Context, db *sql.DB, cfg LocateIssueConfig, logger 
 	}
 	scored := make([]scoredCandidate, 0, len(candidateMap))
 	for _, c := range candidateMap {
-		var confidence float64
 		normalizedBM25 := NormalizeBM25(c.bm25Score, maxAbsBM25)
-		if embeddingAvailable && c.hasVector {
-			confidence = ComputeConfidenceScore(c.cosineScore, normalizedBM25)
-		} else {
-			confidence = ComputeConfidenceScoreLexicalOnly(normalizedBM25)
-		}
+		confidence := ComputeConfidenceScoreLexicalOnly(normalizedBM25)
 		confidence = adjustLocateIssueConfidence(c, confidence)
 		scored = append(scored, scoredCandidate{candidate: c, confidence: confidence})
 	}
@@ -383,7 +287,7 @@ func LocateIssue(ctx context.Context, db *sql.DB, cfg LocateIssueConfig, logger 
 
 	// Return empty list with message when no candidates exceed threshold.
 	if len(filtered) == 0 {
-		return []LocateIssueResult{}, warning, nil
+		return []LocateIssueResult{}, "", nil
 	}
 
 	// Apply limit.
@@ -436,7 +340,7 @@ func LocateIssue(ctx context.Context, db *sql.DB, cfg LocateIssueConfig, logger 
 		results = append(results, result)
 	}
 
-	return results, warning, nil
+	return results, "", nil
 }
 
 // getMatchingChunks retrieves code chunks for a given file and symbol name.
@@ -529,3 +433,4 @@ func getCrossRepoLinks(ctx context.Context, db *sql.DB, codebaseID int64, symbol
 	}
 	return links
 }
+

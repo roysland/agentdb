@@ -33,11 +33,6 @@ func newRootCmd(ctx context.Context) *cobra.Command {
 	root.PersistentFlags().StringVar(&rootCfg.DatabaseURL, "db-url", "", "Database URL or file path (env: AGENTDB_DB_URL)")
 	root.PersistentFlags().StringVar(&rootCfg.DatabaseDriver, "db-driver", "", "Database driver mode: auto|sqlite3 (env: AGENTDB_DB_DRIVER)")
 	root.PersistentFlags().StringVar(&rootCfg.ProjectPath, "project-path", "", "Default project path context (env: AGENTDB_PROJECT_PATH)")
-	root.PersistentFlags().StringVar(&rootCfg.EmbeddingProvider, "embed-provider", "", "Embedding provider: disabled|ollama (env: AGENTDB_EMBED_PROVIDER)")
-	root.PersistentFlags().StringVar(&rootCfg.EmbeddingBaseURL, "embed-base-url", "", "Embedding API base URL (env: AGENTDB_EMBED_BASE_URL)")
-	root.PersistentFlags().StringVar(&rootCfg.EmbeddingAPIKey, "embed-api-key", "", "Embedding API key (env: AGENTDB_EMBED_API_KEY)")
-	root.PersistentFlags().StringVar(&rootCfg.EmbeddingModel, "embed-model", "", "Embedding model name (env: AGENTDB_EMBED_MODEL)")
-	root.PersistentFlags().IntVar(&rootCfg.EmbeddingTimeoutSeconds, "embed-timeout-seconds", 0, "Embedding HTTP timeout seconds (env: AGENTDB_EMBED_TIMEOUT_SECONDS)")
 
 	root.AddCommand(newBootstrapCmd(ctx))
 	root.AddCommand(newMemoryCmd(ctx))

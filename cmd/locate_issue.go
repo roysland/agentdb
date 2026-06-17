@@ -9,7 +9,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/roysland/agentdb/internal/db"
-	"github.com/roysland/agentdb/internal/embed"
 	"github.com/roysland/agentdb/internal/observe"
 	"github.com/roysland/agentdb/internal/search"
 )
@@ -70,18 +69,10 @@ func locateIssueImpactArea(ctx context.Context, conn *sql.DB, issueText string, 
 		return nil, err
 	}
 
-	// Resolve embedding provider (may be nil for lexical-only fallback).
-	var provider embed.Provider
-	prov, provErr := sessionEmbeddingProvider(rootCfg)
-	if provErr == nil {
-		provider = prov
-	}
-
 	cfg := search.LocateIssueConfig{
 		IssueText:   issueText,
 		CodebaseIDs: codebaseIDs,
 		Limit:       limit,
-		Provider:    provider,
 	}
 
 	results, warning, err := search.LocateIssue(ctx, conn, cfg, logger)

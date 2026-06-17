@@ -3,10 +3,7 @@ package search
 import (
 	"context"
 	"database/sql"
-	"encoding/binary"
 	"fmt"
-	"math"
-	"sort"
 	"strings"
 
 	"github.com/roysland/agentdb/internal/observe"
@@ -22,15 +19,6 @@ type FTS5Result struct {
 	StartLine int64
 	EndLine   int64
 	BM25Score float64
-	IsPending bool // true if embedding_status = 'pending_embedding'
-}
-
-// HybridResult extends FTS5Result with cosine similarity re-ranking metadata.
-type HybridResult struct {
-	FTS5Result
-	CosineScore   float64
-	CombinedScore float64
-	VectorApplied bool // false if chunk has pending_embedding status
 }
 
 // FTS5Search provides full-text search over the chunks table using SQLite FTS5.
@@ -110,74 +98,6 @@ func (s *FTS5Search) SearchLexical(ctx context.Context, query string, codebaseID
 	return s.searchWithLIKE(ctx, query, codebaseID, limit)
 }
 
-// SearchHybrid executes FTS5 for candidate set, then re-ranks by cosine similarity.
-func (s *FTS5Search) SearchHybrid(ctx context.Context, query string, queryEmbedding []float32, codebaseID int64, limit int) ([]HybridResult, error) {
-	if query == "" {
-		return nil, nil
-	}
-	if limit <= 0 {
-		limit = 20
-	}
-
-	// Get a larger candidate set from FTS5 for re-ranking
-	candidateLimit := limit * 3
-	if candidateLimit < 50 {
-		candidateLimit = 50
-	}
-
-	candidates, err := s.SearchLexical(ctx, query, codebaseID, candidateLimit)
-	if err != nil {
-		return nil, fmt.Errorf("fts5: hybrid search candidates: %w", err)
-	}
-
-	if len(candidates) == 0 {
-		return nil, nil
-	}
-
-	// Fetch embeddings for candidates and compute cosine similarity
-	results := make([]HybridResult, 0, len(candidates))
-	for _, candidate := range candidates {
-		hr := HybridResult{
-			FTS5Result:    candidate,
-			CosineScore:   0,
-			CombinedScore: candidate.BM25Score,
-			VectorApplied: false,
-		}
-
-		// Skip cosine re-ranking for chunks with pending embedding status
-		if candidate.IsPending {
-			results = append(results, hr)
-			continue
-		}
-
-		// Fetch the chunk's embedding
-		embedding, err := s.getChunkEmbedding(ctx, candidate.ChunkID)
-		if err != nil || len(embedding) == 0 {
-			// No embedding available, use BM25 score only
-			results = append(results, hr)
-			continue
-		}
-
-		// Compute cosine similarity
-		cosine := CosineSimilarity(queryEmbedding, embedding)
-		hr.CosineScore = cosine
-		hr.VectorApplied = true
-		// Combined score: weighted blend of normalized BM25 and cosine
-		// BM25 scores are negative (lower is better), so we negate for combination
-		hr.CombinedScore = 0.4*(-candidate.BM25Score) + 0.6*cosine
-		results = append(results, hr)
-	}
-
-	// Sort by combined score descending
-	sortHybridResults(results)
-
-	if len(results) > limit {
-		results = results[:limit]
-	}
-
-	return results, nil
-}
-
 // IsAvailable checks if the FTS5 index exists and is queryable.
 func (s *FTS5Search) IsAvailable(ctx context.Context) bool {
 	// Check if the chunks_fts table exists and can be queried
@@ -194,7 +114,7 @@ func (s *FTS5Search) IsAvailable(ctx context.Context) bool {
 func (s *FTS5Search) executeFTS5Query(ctx context.Context, query string, codebaseID int64, limit int) ([]FTS5Result, error) {
 	sqlQuery := `
 		SELECT c.id, c.file_path, c.name, c.kind, c.snippet, c.start_line, c.end_line,
-		       bm25(chunks_fts) as score, c.embedding_status
+		       bm25(chunks_fts) as score
 		FROM chunks_fts fts
 		JOIN chunks c ON c.id = fts.rowid
 		WHERE chunks_fts MATCH ?
@@ -212,12 +132,10 @@ func (s *FTS5Search) executeFTS5Query(ctx context.Context, query string, codebas
 	var results []FTS5Result
 	for rows.Next() {
 		var r FTS5Result
-		var embeddingStatus string
 		if err := rows.Scan(&r.ChunkID, &r.FilePath, &r.Name, &r.Kind, &r.Snippet,
-			&r.StartLine, &r.EndLine, &r.BM25Score, &embeddingStatus); err != nil {
+			&r.StartLine, &r.EndLine, &r.BM25Score); err != nil {
 			return nil, fmt.Errorf("fts5: scan result: %w", err)
 		}
-		r.IsPending = embeddingStatus == "pending_embedding"
 		results = append(results, r)
 	}
 
@@ -233,7 +151,7 @@ func (s *FTS5Search) searchWithLIKE(ctx context.Context, query string, codebaseI
 	likePattern := "%" + strings.ReplaceAll(strings.ReplaceAll(query, "%", "\\%"), "_", "\\_") + "%"
 
 	sqlQuery := `
-		SELECT id, file_path, name, kind, snippet, start_line, end_line, embedding_status
+		SELECT id, file_path, name, kind, snippet, start_line, end_line
 		FROM chunks
 		WHERE codebase_id = ?
 		  AND (snippet LIKE ? ESCAPE '\' OR name LIKE ? ESCAPE '\' OR file_path LIKE ? ESCAPE '\')
@@ -249,12 +167,10 @@ func (s *FTS5Search) searchWithLIKE(ctx context.Context, query string, codebaseI
 	var results []FTS5Result
 	for rows.Next() {
 		var r FTS5Result
-		var embeddingStatus string
 		if err := rows.Scan(&r.ChunkID, &r.FilePath, &r.Name, &r.Kind, &r.Snippet,
-			&r.StartLine, &r.EndLine, &embeddingStatus); err != nil {
+			&r.StartLine, &r.EndLine); err != nil {
 			return nil, fmt.Errorf("fts5: LIKE scan: %w", err)
 		}
-		r.IsPending = embeddingStatus == "pending_embedding"
 		r.BM25Score = 0 // LIKE doesn't provide ranking
 		results = append(results, r)
 	}
@@ -264,33 +180,6 @@ func (s *FTS5Search) searchWithLIKE(ctx context.Context, query string, codebaseI
 	}
 
 	return results, nil
-}
-
-// getChunkEmbedding fetches the embedding for a specific chunk.
-func (s *FTS5Search) getChunkEmbedding(ctx context.Context, chunkID int64) ([]float32, error) {
-	var data interface{}
-	err := s.db.QueryRowContext(ctx, "SELECT embedding FROM chunks WHERE id = ?", chunkID).Scan(&data)
-	if err != nil {
-		return nil, err
-	}
-	return blobToFloat32Embedding(data), nil
-}
-
-// blobToFloat32Embedding converts a raw blob to a float32 slice.
-func blobToFloat32Embedding(data interface{}) []float32 {
-	if data == nil {
-		return nil
-	}
-	buf, ok := data.([]byte)
-	if !ok || len(buf) == 0 {
-		return nil
-	}
-	embedding := make([]float32, len(buf)/4)
-	for i := 0; i < len(embedding); i++ {
-		bits := binary.LittleEndian.Uint32(buf[i*4:])
-		embedding[i] = math.Float32frombits(bits)
-	}
-	return embedding
 }
 
 // escapeFTS5Query escapes special FTS5 characters in a query string.
@@ -319,13 +208,6 @@ func escapeFTS5Query(query string) string {
 		return ""
 	}
 	return strings.Join(parts, " ")
-}
-
-// sortHybridResults sorts hybrid results by CombinedScore descending.
-func sortHybridResults(results []HybridResult) {
-	sort.Slice(results, func(i, j int) bool {
-		return results[i].CombinedScore > results[j].CombinedScore
-	})
 }
 
 // log emits a structured log entry if a logger is configured.

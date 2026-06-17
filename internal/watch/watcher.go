@@ -11,7 +11,6 @@ import (
 	"github.com/fsnotify/fsnotify"
 
 	"github.com/roysland/agentdb/internal/chunk"
-	"github.com/roysland/agentdb/internal/embed"
 	"github.com/roysland/agentdb/internal/filefilter"
 	"github.com/roysland/agentdb/internal/index"
 	"github.com/roysland/agentdb/internal/observe"
@@ -31,22 +30,20 @@ const (
 
 // Config holds watcher configuration.
 type Config struct {
-	CodebaseID    int64
-	CodebasePath  string
-	DebounceMs    int
-	Analyze       bool
-	EmbedProvider embed.Provider
+	CodebaseID   int64
+	CodebasePath string
+	DebounceMs   int
+	Analyze      bool
 }
 
 // Watcher monitors a codebase directory for file changes and triggers re-indexing.
 type Watcher struct {
-	codebaseID    int64
-	codebasePath  string
-	debounce      time.Duration
-	analyze       bool
-	embedProvider embed.Provider
-	db            *sql.DB
-	logger        *observe.Logger
+	codebaseID   int64
+	codebasePath string
+	debounce     time.Duration
+	analyze      bool
+	db           *sql.DB
+	logger       *observe.Logger
 }
 
 // New creates a Watcher from the given config and database connection.
@@ -69,13 +66,12 @@ func New(cfg Config, db *sql.DB, logger *observe.Logger) (*Watcher, error) {
 	}
 
 	return &Watcher{
-		codebaseID:    cfg.CodebaseID,
-		codebasePath:  cfg.CodebasePath,
-		debounce:      time.Duration(debounceMs) * time.Millisecond,
-		analyze:       cfg.Analyze,
-		embedProvider: cfg.EmbedProvider,
-		db:            db,
-		logger:        logger,
+		codebaseID:   cfg.CodebaseID,
+		codebasePath: cfg.CodebasePath,
+		debounce:     time.Duration(debounceMs) * time.Millisecond,
+		analyze:      cfg.Analyze,
+		db:           db,
+		logger:       logger,
 	}, nil
 }
 
@@ -266,19 +262,6 @@ func (w *Watcher) reindex(ctx context.Context) error {
 				IndexedAt: indexedAt,
 			}
 
-			if w.embedProvider != nil {
-				if emb, embErr := w.embedProvider.Embed(ctx, c.Snippet); embErr == nil {
-					chunkData.Embedding = emb
-					chunkData.EmbeddingModel = w.embedProvider.ModelName()
-				} else {
-					w.logger.Log(observe.LogEntry{
-						Level:     "warn",
-						Operation: "watch_embed_chunk",
-						Error:     fmt.Sprintf("embed chunk %s: %v", c.Key, embErr),
-					})
-				}
-			}
-
 			if err := chunkRepo.Create(ctx, w.codebaseID, chunkData); err != nil {
 				return fmt.Errorf("create chunk %s: %w", c.Key, err)
 			}
@@ -460,22 +443,6 @@ func (w *Watcher) runAnalyze(ctx context.Context, delta index.DeltaResult) error
 				EndLine:       sym.EndLine,
 				FileHash:      sym.FileHash,
 				IndexedAt:     indexedAt,
-			}
-			if w.embedProvider != nil {
-				text := sym.Signature
-				if sym.DocComment != "" {
-					text += "\n" + sym.DocComment
-				}
-				if emb, embErr := w.embedProvider.Embed(ctx, text); embErr == nil {
-					sd.Embedding = emb
-					sd.EmbeddingModel = w.embedProvider.ModelName()
-				} else {
-					w.logger.Log(observe.LogEntry{
-						Level:     "warn",
-						Operation: "watch_embed_symbol",
-						Error:     fmt.Sprintf("embed symbol %s: %v", sym.QualifiedName, embErr),
-					})
-				}
 			}
 			if err := symbolRepo.Create(ctx, w.codebaseID, sd); err != nil {
 				return fmt.Errorf("store symbol %s: %w", sym.QualifiedName, err)

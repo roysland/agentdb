@@ -45,42 +45,6 @@ AGENTDB_DB_URL = "~/.local/share/agentdb/agentdb.db"
 AGENTDB_DB_DRIVER = "auto"
 ```
 
-**With local embeddings (Ollama):**
-
-```toml
-AGENTDB_DB_URL = "~/.local/share/agentdb/agentdb.db"
-AGENTDB_DB_DRIVER = "auto"
-
-AGENTDB_EMBED_PROVIDER = "ollama"
-AGENTDB_EMBED_BASE_URL = "http://localhost:11434/v1"
-AGENTDB_EMBED_MODEL = "nomic-embed-text"
-AGENTDB_EMBED_TIMEOUT_SECONDS = "30"
-```
-
-**With OpenAI embeddings:**
-
-```toml
-AGENTDB_DB_URL = "~/.local/share/agentdb/agentdb.db"
-AGENTDB_EMBED_PROVIDER = "openai"
-AGENTDB_EMBED_BASE_URL = "https://api.openai.com/v1"
-AGENTDB_EMBED_API_KEY = "sk-..."
-AGENTDB_EMBED_MODEL = "text-embedding-3-small"
-```
-
-Embeddings are optional. Without them, all search falls back to lexical mode (FTS5).
-
-### Security hardening
-
-For environments where you want to ensure no source leaves the machine:
-
-```toml
-AGENTDB_EMBED_LOCAL_ONLY = "1"
-AGENTDB_PLUGIN_SAFE_MODE = "1"
-AGENTDB_LOG_LEVEL = "info"
-```
-
-`AGENTDB_EMBED_LOCAL_ONLY=1` hard-fails startup if the embedding endpoint isn't localhost.
-
 ## First-Time Setup
 
 Run this once to initialize the database schema:
@@ -205,8 +169,7 @@ Once the server is running and an agent is connected, the main tools you'll use:
 | `find_usages` | Find all call sites that reference a symbol |
 | `get_callers` / `get_callees` | Traverse the call graph up or down |
 | `get_file_symbols` | List all symbols defined in a specific file |
-| `search` | Lexical or hybrid search across code chunks |
-| `semantic_search` | Natural language symbol lookup via vector similarity |
+| `search` | Lexical search across code chunks (FTS5/BM25) |
 | `locate_issue_impact_area` | Triage a bug description into ranked impact candidates |
 | `project_overview` | High-level summary: languages, LOC, packages, top files |
 | `codebase_context` | Load README/design docs for session bootstrapping |
@@ -219,9 +182,6 @@ Ensure `$(go env GOPATH)/bin` is in your `$PATH`.
 
 **MCP tools not appearing in Claude Code**
 Check that `agentdb mcp` runs without error in your terminal first. The binary must be on `$PATH` for the MCP client to launch it.
-
-**Ollama embedding errors**
-Confirm Ollama is running (`ollama serve`) and the model is pulled (`ollama pull nomic-embed-text`). Test with `curl http://localhost:11434/v1/models`.
 
 **Index feels stale after large changes**
 Run a full (non-incremental) reindex to clear out deleted-file residue:

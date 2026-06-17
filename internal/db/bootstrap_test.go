@@ -195,17 +195,8 @@ func TestMigrateSchema_FTS5AndNewColumns(t *testing.T) {
 		t.Fatalf("MigrateSchema: %v", err)
 	}
 
-	// Verify embedding_status column exists on chunks
-	exists, err := columnExists(ctx, database, "chunks", "embedding_status")
-	if err != nil {
-		t.Fatalf("check embedding_status: %v", err)
-	}
-	if !exists {
-		t.Error("embedding_status column not found on chunks table")
-	}
-
 	// Verify index_status column exists on indexed_files
-	exists, err = columnExists(ctx, database, "indexed_files", "index_status")
+	exists, err := columnExists(ctx, database, "indexed_files", "index_status")
 	if err != nil {
 		t.Fatalf("check index_status: %v", err)
 	}

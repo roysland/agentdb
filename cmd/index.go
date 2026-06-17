@@ -13,7 +13,6 @@ import (
 	"github.com/roysland/agentdb/internal/chunk"
 	"github.com/roysland/agentdb/internal/config"
 	"github.com/roysland/agentdb/internal/db"
-	"github.com/roysland/agentdb/internal/embed"
 	"github.com/roysland/agentdb/internal/index"
 	"github.com/roysland/agentdb/internal/store"
 )
@@ -23,7 +22,6 @@ type indexCmd struct {
 	path          string
 	codebasePath  string
 	linesPerChunk int
-	generateEmbed bool
 	incremental   bool
 }
 
@@ -32,7 +30,7 @@ func newIndexCmd(ctx context.Context) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "index",
-		Short: "Index a registered codebase and generate embeddings",
+		Short: "Index a registered codebase",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return ic.run(ctx)
 		},
@@ -42,7 +40,6 @@ func newIndexCmd(ctx context.Context) *cobra.Command {
 	cmd.Flags().StringVar(&ic.path, "path", "", "Path to codebase root (registers codebase if missing)")
 	cmd.Flags().StringVar(&ic.codebasePath, "codebase-path", "", "Path to codebase root")
 	cmd.Flags().IntVar(&ic.linesPerChunk, "lines-per-chunk", 0, "Lines per chunk (default from config/env, fallback 50)")
-	cmd.Flags().BoolVar(&ic.generateEmbed, "embed", false, "Generate embeddings (requires embedding provider configured)")
 	cmd.Flags().BoolVar(&ic.incremental, "incremental", false, "Only re-index changed files (uses stored file hashes)")
 
 	return cmd
@@ -72,29 +69,15 @@ func (ic *indexCmd) run(ctx context.Context) error {
 	chunkRepo := store.NewChunkRepo(dbConn)
 	indexedFileRepo := store.NewIndexedFileRepo(dbConn)
 
-	// Setup embedding provider if requested
-	var provider embed.Provider
-	embedRequested := ic.generateEmbed
-	if !embedRequested && resolved.EmbeddingProvider != "disabled" {
-		embedRequested = true
-	}
-	if embedRequested {
-		provider, err = embed.NewProviderFromRuntime(resolved)
-		if err != nil {
-			_, _ = fmt.Fprintf(os.Stderr, "warning: embedding provider unavailable (%s), indexing without embeddings\n", err)
-			provider = nil
-		}
-	}
-
 	// Determine if we should do incremental indexing
 	if ic.incremental {
-		return ic.runIncremental(ctx, codebaseID, codebasePath, chunkRepo, indexedFileRepo, provider, embedRequested, startTime)
+		return ic.runIncremental(ctx, codebaseID, codebasePath, chunkRepo, indexedFileRepo, startTime)
 	}
 
-	return ic.runFull(ctx, codebaseID, codebasePath, chunkRepo, indexedFileRepo, provider, embedRequested, startTime)
+	return ic.runFull(ctx, codebaseID, codebasePath, chunkRepo, indexedFileRepo, startTime)
 }
 
-func (ic *indexCmd) runFull(ctx context.Context, codebaseID int64, codebasePath string, chunkRepo *store.ChunkRepo, indexedFileRepo *store.IndexedFileRepo, provider embed.Provider, embedRequested bool, startTime time.Time) error {
+func (ic *indexCmd) runFull(ctx context.Context, codebaseID int64, codebasePath string, chunkRepo *store.ChunkRepo, indexedFileRepo *store.IndexedFileRepo, startTime time.Time) error {
 	// Delete existing chunks for this codebase
 	if err := chunkRepo.DeleteByCodebase(ctx, codebaseID); err != nil {
 		return fmt.Errorf("delete existing chunks: %w", err)
@@ -117,7 +100,6 @@ func (ic *indexCmd) runFull(ctx context.Context, codebaseID int64, codebasePath 
 
 	// Store chunks in database and record manifest
 	totalChunks := 0
-	embeddingFailures := 0
 	indexedAt := time.Now().Unix()
 	totalFiles := len(chunksMap)
 
@@ -137,17 +119,6 @@ func (ic *indexCmd) runFull(ctx context.Context, codebaseID int64, codebasePath 
 				EndLine:   c.EndLine,
 				FileHash:  c.FileHash,
 				IndexedAt: indexedAt,
-			}
-
-			if embedRequested && provider != nil {
-				embedding, err := provider.Embed(ctx, c.Snippet)
-				if err != nil {
-					embeddingFailures++
-					_, _ = fmt.Fprintf(os.Stderr, "warning: generate embedding for chunk %s: %v\n", c.Key, err)
-				} else {
-					chunkData.Embedding = embedding
-					chunkData.EmbeddingModel = provider.ModelName()
-				}
 			}
 
 			if err := chunkRepo.Create(ctx, codebaseID, chunkData); err != nil {
@@ -171,34 +142,26 @@ func (ic *indexCmd) runFull(ctx context.Context, codebaseID int64, codebasePath 
 	if durationMs > 0 {
 		filesPerSecond = float64(totalFiles) / duration.Seconds()
 	}
-	embeddingEnabled := provider != nil
-	embeddingModel := ""
-	if embeddingEnabled {
-		embeddingModel = provider.ModelName()
-	}
 
 	result := map[string]interface{}{
-		"codebase_id":        codebaseID,
-		"codebase_path":      codebasePath,
-		"total_files":        totalFiles,
-		"files_indexed":      totalFiles,
-		"files_skipped":      0,
-		"files_changed":      0,
-		"files_added":        totalFiles,
-		"files_removed":      0,
-		"total_chunks":       totalChunks,
-		"duration_ms":        durationMs,
-		"files_per_second":   filesPerSecond,
-		"embedding_enabled":  embeddingEnabled,
-		"embedding_model":    embeddingModel,
-		"embedding_failures": embeddingFailures,
-		"incremental":        false,
+		"codebase_id":      codebaseID,
+		"codebase_path":    codebasePath,
+		"total_files":      totalFiles,
+		"files_indexed":    totalFiles,
+		"files_skipped":    0,
+		"files_changed":    0,
+		"files_added":      totalFiles,
+		"files_removed":    0,
+		"total_chunks":     totalChunks,
+		"duration_ms":      durationMs,
+		"files_per_second": filesPerSecond,
+		"incremental":      false,
 	}
 
 	return printJSON(result)
 }
 
-func (ic *indexCmd) runIncremental(ctx context.Context, codebaseID int64, codebasePath string, chunkRepo *store.ChunkRepo, indexedFileRepo *store.IndexedFileRepo, provider embed.Provider, embedRequested bool, startTime time.Time) error {
+func (ic *indexCmd) runIncremental(ctx context.Context, codebaseID int64, codebasePath string, chunkRepo *store.ChunkRepo, indexedFileRepo *store.IndexedFileRepo, startTime time.Time) error {
 	// Load stored hashes from indexed_files table
 	storedHashes, err := indexedFileRepo.GetHashesByCodebase(ctx, codebaseID)
 	if err != nil {
@@ -207,7 +170,7 @@ func (ic *indexCmd) runIncremental(ctx context.Context, codebaseID int64, codeba
 
 	// If no manifest exists, fall back to full index
 	if len(storedHashes) == 0 {
-		return ic.runFull(ctx, codebaseID, codebasePath, chunkRepo, indexedFileRepo, provider, embedRequested, startTime)
+		return ic.runFull(ctx, codebaseID, codebasePath, chunkRepo, indexedFileRepo, startTime)
 	}
 
 	// Compute delta
@@ -218,7 +181,6 @@ func (ic *indexCmd) runIncremental(ctx context.Context, codebaseID int64, codeba
 
 	indexedAt := time.Now().Unix()
 	totalChunks := 0
-	embeddingFailures := 0
 
 	cfg := chunk.ChunkerConfig{
 		LinesPerChunk: ic.linesPerChunk,
@@ -259,17 +221,6 @@ func (ic *indexCmd) runIncremental(ctx context.Context, codebaseID int64, codeba
 				IndexedAt: indexedAt,
 			}
 
-			if embedRequested && provider != nil {
-				embedding, err := provider.Embed(ctx, c.Snippet)
-				if err != nil {
-					embeddingFailures++
-					_, _ = fmt.Fprintf(os.Stderr, "warning: generate embedding for chunk %s: %v\n", c.Key, err)
-				} else {
-					chunkData.Embedding = embedding
-					chunkData.EmbeddingModel = provider.ModelName()
-				}
-			}
-
 			if err := chunkRepo.Create(ctx, codebaseID, chunkData); err != nil {
 				return wrapChunkErr(err, c.Key)
 			}
@@ -306,28 +257,20 @@ func (ic *indexCmd) runIncremental(ctx context.Context, codebaseID int64, codeba
 	if durationMs > 0 {
 		filesPerSecond = float64(filesIndexed) / duration.Seconds()
 	}
-	embeddingEnabled := provider != nil
-	embeddingModel := ""
-	if embeddingEnabled {
-		embeddingModel = provider.ModelName()
-	}
 
 	result := map[string]interface{}{
-		"codebase_id":        codebaseID,
-		"codebase_path":      codebasePath,
-		"total_files":        totalFiles,
-		"files_indexed":      filesIndexed,
-		"files_skipped":      len(delta.Unchanged),
-		"files_changed":      len(delta.Changed),
-		"files_added":        len(delta.Added),
-		"files_removed":      len(delta.Removed),
-		"total_chunks":       totalChunks,
-		"duration_ms":        durationMs,
-		"files_per_second":   filesPerSecond,
-		"embedding_enabled":  embeddingEnabled,
-		"embedding_model":    embeddingModel,
-		"embedding_failures": embeddingFailures,
-		"incremental":        true,
+		"codebase_id":      codebaseID,
+		"codebase_path":    codebasePath,
+		"total_files":      totalFiles,
+		"files_indexed":    filesIndexed,
+		"files_skipped":    len(delta.Unchanged),
+		"files_changed":    len(delta.Changed),
+		"files_added":      len(delta.Added),
+		"files_removed":    len(delta.Removed),
+		"total_chunks":     totalChunks,
+		"duration_ms":      durationMs,
+		"files_per_second": filesPerSecond,
+		"incremental":      true,
 	}
 
 	return printJSON(result)

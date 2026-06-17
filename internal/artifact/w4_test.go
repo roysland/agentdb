@@ -38,8 +38,7 @@ func TestExportImport_PreservesTargetCodebaseID(t *testing.T) {
 	if err := Export(ctx, srcDB, ExportOptions{
 		CodebaseID:        1,
 		OutputPath:        artifactPath,
-		IncludeEmbeddings: false,
-	}); err != nil {
+			}); err != nil {
 		if strings.Contains(err.Error(), "ATTACH is an experimental feature") {
 			t.Skip("driver does not support ATTACH in this test runtime")
 		}
@@ -102,7 +101,6 @@ func TestArtifactDDL_IncludesWave4SchemaParity(t *testing.T) {
 		t.Fatalf("apply artifact ddl: %v", err)
 	}
 
-	assertHasColumn(t, ctx, db, "chunks", "embedding_status")
 	assertHasColumn(t, ctx, db, "indexed_files", "index_status")
 	assertHasColumn(t, ctx, db, "indexed_files", "status_reason")
 	assertHasColumn(t, ctx, db, "edges", "target_codebase_id")
@@ -135,8 +133,7 @@ func TestExport_StripSourceBehavior(t *testing.T) {
 		err := Export(ctx, srcDB, ExportOptions{
 			CodebaseID:        1,
 			OutputPath:        artifactPath,
-			IncludeEmbeddings: false,
-			StripSource:       false,
+						StripSource:       false,
 		})
 		if err != nil {
 			if strings.Contains(err.Error(), "ATTACH is an experimental feature") {
@@ -177,8 +174,7 @@ func TestExport_StripSourceBehavior(t *testing.T) {
 		err := Export(ctx, srcDB, ExportOptions{
 			CodebaseID:        1,
 			OutputPath:        artifactPath,
-			IncludeEmbeddings: false,
-			StripSource:       true,
+						StripSource:       true,
 		})
 		if err != nil {
 			if strings.Contains(err.Error(), "ATTACH is an experimental feature") {
@@ -269,9 +265,6 @@ CREATE TABLE IF NOT EXISTS chunks (
 	end_line INTEGER NOT NULL,
 	file_hash TEXT NOT NULL,
 	indexed_at INTEGER NOT NULL,
-	embedding BLOB,
-	embedding_model TEXT NOT NULL,
-	embedding_status TEXT NOT NULL,
 	UNIQUE(codebase_id, chunk_key)
 );
 CREATE TABLE IF NOT EXISTS indexed_files (
@@ -300,9 +293,7 @@ CREATE TABLE IF NOT EXISTS symbols (
 	start_line INTEGER NOT NULL,
 	end_line INTEGER NOT NULL,
 	file_hash TEXT NOT NULL,
-	indexed_at INTEGER NOT NULL,
-	embedding BLOB,
-	embedding_model TEXT NOT NULL
+	indexed_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS source_files (
 	id INTEGER PRIMARY KEY,
@@ -334,12 +325,12 @@ CREATE TABLE IF NOT EXISTS edges (
 func seedMainDBForArtifactTests(ctx context.Context, db *sql.DB) error {
 	_, err := db.ExecContext(ctx, `
 INSERT INTO codebases(id, root_path, name, indexed_at) VALUES (1, '/repo/a', 'a', 1);
-INSERT INTO chunks(id, codebase_id, file_path, chunk_key, language, kind, name, signature, snippet, start_line, end_line, file_hash, indexed_at, embedding, embedding_model, embedding_status)
-VALUES (1, 1, 'main.go', 'main.go:1-1', 'go', 'function', 'main', 'func main()', 'func main(){}', 1, 1, 'h1', 1, NULL, '', 'complete');
+INSERT INTO chunks(id, codebase_id, file_path, chunk_key, language, kind, name, signature, snippet, start_line, end_line, file_hash, indexed_at)
+VALUES (1, 1, 'main.go', 'main.go:1-1', 'go', 'function', 'main', 'func main()', 'func main(){}', 1, 1, 'h1', 1);
 INSERT INTO indexed_files(id, codebase_id, file_path, file_hash, chunk_count, indexed_at, index_status, status_reason)
 VALUES (1, 1, 'main.go', 'h1', 1, 1, 'complete', '');
-INSERT INTO symbols(id, codebase_id, file_path, language, kind, name, qualified_name, receiver, signature, doc_comment, visibility, body_snippet, start_line, end_line, file_hash, indexed_at, embedding, embedding_model)
-VALUES (1, 1, 'main.go', 'go', 'function', 'main', 'main', '', 'func main()', 'main entry point', 'public', 'func main(){}', 1, 1, 'h1', 1, NULL, '');
+INSERT INTO symbols(id, codebase_id, file_path, language, kind, name, qualified_name, receiver, signature, doc_comment, visibility, body_snippet, start_line, end_line, file_hash, indexed_at)
+VALUES (1, 1, 'main.go', 'go', 'function', 'main', 'main', '', 'func main()', 'main entry point', 'public', 'func main(){}', 1, 1, 'h1', 1);
 INSERT INTO source_files(id, codebase_id, file_path, language, package_name, loc, symbol_count, file_hash, indexed_at)
 VALUES (1, 1, 'main.go', 'go', 'main', 1, 1, 'h1', 1);
 INSERT INTO edges(id, codebase_id, from_kind, from_ref, to_kind, to_ref, edge_kind, line, resolved, target_codebase_id)

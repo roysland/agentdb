@@ -11,7 +11,6 @@ import (
 
 	"github.com/roysland/agentdb/internal/config"
 	"github.com/roysland/agentdb/internal/db"
-	"github.com/roysland/agentdb/internal/embed"
 	"github.com/roysland/agentdb/internal/filefilter"
 	"github.com/roysland/agentdb/internal/index"
 	"github.com/roysland/agentdb/internal/parse"
@@ -21,7 +20,6 @@ import (
 type analyzeCmd struct {
 	codebaseID   int64
 	codebasePath string
-	embed        bool
 	incremental  bool
 }
 
@@ -38,7 +36,6 @@ func newAnalyzeCmd(ctx context.Context) *cobra.Command {
 
 	cmd.Flags().Int64Var(&ac.codebaseID, "codebase-id", 0, "Codebase ID to analyze")
 	cmd.Flags().StringVar(&ac.codebasePath, "codebase-path", "", "Path to codebase root")
-	cmd.Flags().BoolVar(&ac.embed, "embed", false, "Generate embeddings for symbols (requires embedding provider)")
 	cmd.Flags().BoolVar(&ac.incremental, "incremental", false, "Only re-analyze changed files (uses stored file hashes)")
 
 	return cmd
@@ -67,17 +64,6 @@ func (ac *analyzeCmd) run(ctx context.Context) error {
 	sfRepo := store.NewSourceFileRepo(conn)
 	wsRepo := store.NewWorkspaceRepo(conn)
 
-	// Setup optional embedding provider
-	var provider embed.Provider
-	embedRequested := ac.embed || resolved.EmbeddingProvider != "disabled"
-	if embedRequested {
-		provider, err = embed.NewProviderFromRuntime(resolved)
-		if err != nil {
-			_, _ = fmt.Fprintf(os.Stderr, "warning: embedding provider unavailable (%s), analyzing without embeddings\n", err)
-			provider = nil
-		}
-	}
-
 	// Construct plugin registry with default and env-configured plugin directories
 	pluginDirs := parse.PluginDirectories()
 	registry, err := parse.NewPluginRegistry(pluginDirs, parse.DefaultParsers())
@@ -91,9 +77,9 @@ func (ac *analyzeCmd) run(ctx context.Context) error {
 	// Determine if we should do incremental analysis
 	var runErr error
 	if ac.incremental {
-		runErr = ac.runIncremental(ctx, parsers, symbolRepo, edgeRepo, sfRepo, provider, startTime)
+		runErr = ac.runIncremental(ctx, parsers, symbolRepo, edgeRepo, sfRepo, startTime)
 	} else {
-		runErr = ac.runFull(ctx, parsers, symbolRepo, edgeRepo, sfRepo, provider, startTime)
+		runErr = ac.runFull(ctx, parsers, symbolRepo, edgeRepo, sfRepo, startTime)
 	}
 	if runErr != nil {
 		return runErr
@@ -105,7 +91,7 @@ func (ac *analyzeCmd) run(ctx context.Context) error {
 	return nil
 }
 
-func (ac *analyzeCmd) runFull(ctx context.Context, parsers []parse.Parser, symbolRepo *store.SymbolRepo, edgeRepo *store.EdgeRepo, sfRepo *store.SourceFileRepo, provider embed.Provider, startTime time.Time) error {
+func (ac *analyzeCmd) runFull(ctx context.Context, parsers []parse.Parser, symbolRepo *store.SymbolRepo, edgeRepo *store.EdgeRepo, sfRepo *store.SourceFileRepo, startTime time.Time) error {
 	// Clear existing analysis for this codebase
 	if err := symbolRepo.DeleteByCodebase(ctx, ac.codebaseID); err != nil {
 		return fmt.Errorf("clear symbols: %w", err)
@@ -127,7 +113,7 @@ func (ac *analyzeCmd) runFull(ctx context.Context, parsers []parse.Parser, symbo
 	totalSymbols, totalEdges, totalFiles := 0, 0, 0
 
 	for _, result := range results {
-		if err := ac.storeFileResult(ctx, result, symbolRepo, edgeRepo, sfRepo, provider, indexedAt); err != nil {
+		if err := ac.storeFileResult(ctx, result, symbolRepo, edgeRepo, sfRepo, indexedAt); err != nil {
 			return err
 		}
 		totalFiles++
@@ -140,11 +126,6 @@ func (ac *analyzeCmd) runFull(ctx context.Context, parsers []parse.Parser, symbo
 	filesPerSecond := float64(0)
 	if durationMs > 0 {
 		filesPerSecond = float64(totalFiles) / duration.Seconds()
-	}
-	embeddingEnabled := provider != nil
-	embeddingModel := ""
-	if embeddingEnabled {
-		embeddingModel = provider.ModelName()
 	}
 
 	return printJSON(map[string]any{
@@ -159,13 +140,11 @@ func (ac *analyzeCmd) runFull(ctx context.Context, parsers []parse.Parser, symbo
 		"edges_extracted":   totalEdges,
 		"duration_ms":       durationMs,
 		"files_per_second":  filesPerSecond,
-		"embedding_enabled": embeddingEnabled,
-		"embedding_model":   embeddingModel,
 		"incremental":       false,
 	})
 }
 
-func (ac *analyzeCmd) runIncremental(ctx context.Context, parsers []parse.Parser, symbolRepo *store.SymbolRepo, edgeRepo *store.EdgeRepo, sfRepo *store.SourceFileRepo, provider embed.Provider, startTime time.Time) error {
+func (ac *analyzeCmd) runIncremental(ctx context.Context, parsers []parse.Parser, symbolRepo *store.SymbolRepo, edgeRepo *store.EdgeRepo, sfRepo *store.SourceFileRepo, startTime time.Time) error {
 	// Load stored hashes from source_files table
 	storedHashes, err := sfRepo.GetHashesByCodebase(ctx, ac.codebaseID)
 	if err != nil {
@@ -174,7 +153,7 @@ func (ac *analyzeCmd) runIncremental(ctx context.Context, parsers []parse.Parser
 
 	// If no source_files exist, fall back to full analyze
 	if len(storedHashes) == 0 {
-		return ac.runFull(ctx, parsers, symbolRepo, edgeRepo, sfRepo, provider, startTime)
+		return ac.runFull(ctx, parsers, symbolRepo, edgeRepo, sfRepo, startTime)
 	}
 
 	// Compute delta
@@ -220,7 +199,7 @@ func (ac *analyzeCmd) runIncremental(ctx context.Context, parsers []parse.Parser
 			continue
 		}
 
-		if err := ac.storeFileResult(ctx, result, symbolRepo, edgeRepo, sfRepo, provider, indexedAt); err != nil {
+		if err := ac.storeFileResult(ctx, result, symbolRepo, edgeRepo, sfRepo, indexedAt); err != nil {
 			return err
 		}
 		totalSymbols += len(result.Symbols)
@@ -249,11 +228,6 @@ func (ac *analyzeCmd) runIncremental(ctx context.Context, parsers []parse.Parser
 	if durationMs > 0 {
 		filesPerSecond = float64(filesAnalyzed) / duration.Seconds()
 	}
-	embeddingEnabled := provider != nil
-	embeddingModel := ""
-	if embeddingEnabled {
-		embeddingModel = provider.ModelName()
-	}
 
 	return printJSON(map[string]any{
 		"codebase_id":       ac.codebaseID,
@@ -267,14 +241,12 @@ func (ac *analyzeCmd) runIncremental(ctx context.Context, parsers []parse.Parser
 		"edges_extracted":   totalEdges,
 		"duration_ms":       durationMs,
 		"files_per_second":  filesPerSecond,
-		"embedding_enabled": embeddingEnabled,
-		"embedding_model":   embeddingModel,
 		"incremental":       true,
 	})
 }
 
 // storeFileResult persists a parsed file's symbols, edges, and source_file record.
-func (ac *analyzeCmd) storeFileResult(ctx context.Context, result parse.FileResult, symbolRepo *store.SymbolRepo, edgeRepo *store.EdgeRepo, sfRepo *store.SourceFileRepo, provider embed.Provider, indexedAt int64) error {
+func (ac *analyzeCmd) storeFileResult(ctx context.Context, result parse.FileResult, symbolRepo *store.SymbolRepo, edgeRepo *store.EdgeRepo, sfRepo *store.SourceFileRepo, indexedAt int64) error {
 	sfData := store.SourceFileData{
 		FilePath:    result.FilePath,
 		Language:    result.Language,
@@ -304,17 +276,6 @@ func (ac *analyzeCmd) storeFileResult(ctx context.Context, result parse.FileResu
 			EndLine:       sym.EndLine,
 			FileHash:      sym.FileHash,
 			IndexedAt:     indexedAt,
-		}
-		if provider != nil {
-			// Embed signature + doc comment for semantic symbol lookup
-			text := sym.Signature
-			if sym.DocComment != "" {
-				text += "\n" + sym.DocComment
-			}
-			if emb, embErr := provider.Embed(ctx, text); embErr == nil {
-				sd.Embedding = emb
-				sd.EmbeddingModel = provider.ModelName()
-			}
 		}
 		if err := symbolRepo.Create(ctx, ac.codebaseID, sd); err != nil {
 			return fmt.Errorf("store symbol %s: %w", sym.QualifiedName, err)

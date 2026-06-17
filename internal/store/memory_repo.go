@@ -3,27 +3,23 @@ package store
 import (
 	"context"
 	"database/sql"
-	"encoding/binary"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"strings"
 
 	dbgen "github.com/roysland/agentdb/data/gen"
 )
 
 type Memory struct {
-	ID             string    `json:"id"`
-	Content        string    `json:"content"`
-	Embedding      []float32 `json:"embedding,omitempty"`
-	Category       string    `json:"category"`
-	WorkspaceID    *int64    `json:"workspace_id,omitempty"`
-	CodebaseID     *int64    `json:"codebase_id,omitempty"`
-	CreatedAt      int64     `json:"created_at"`
-	LastRetrieved  *int64    `json:"last_retrieved,omitempty"`
-	RetrievalCount int64     `json:"retrieval_count"`
-	SourceTask     string    `json:"source_task,omitempty"`
+	ID             string `json:"id"`
+	Content        string `json:"content"`
+	Category       string `json:"category"`
+	WorkspaceID    *int64 `json:"workspace_id,omitempty"`
+	CodebaseID     *int64 `json:"codebase_id,omitempty"`
+	CreatedAt      int64  `json:"created_at"`
+	LastRetrieved  *int64 `json:"last_retrieved,omitempty"`
+	RetrievalCount int64  `json:"retrieval_count"`
+	SourceTask     string `json:"source_task,omitempty"`
 }
 
 type ListMemoryParams struct {
@@ -37,7 +33,6 @@ type UpdateMemoryParams struct {
 	Content     *string
 	Category    *string
 	SourceTask  *string
-	Embedding   *[]float32
 	WorkspaceID *int64
 	CodebaseID  *int64
 }
@@ -54,7 +49,6 @@ func (r *MemoryRepo) Create(ctx context.Context, m Memory) error {
 	err := r.q.CreateMemory(ctx, dbgen.CreateMemoryParams{
 		ID:          m.ID,
 		Content:     m.Content,
-		Embedding:   embeddingToDBValue(m.Embedding),
 		Category:    m.Category,
 		WorkspaceID: nullInt64(m.WorkspaceID),
 		CodebaseID:  nullInt64(m.CodebaseID),
@@ -120,9 +114,6 @@ func (r *MemoryRepo) UpdateByID(ctx context.Context, id string, params UpdateMem
 	if params.SourceTask != nil {
 		current.SourceTask = *params.SourceTask
 	}
-	if params.Embedding != nil {
-		current.Embedding = *params.Embedding
-	}
 	if params.WorkspaceID != nil {
 		current.WorkspaceID = params.WorkspaceID
 	}
@@ -132,7 +123,6 @@ func (r *MemoryRepo) UpdateByID(ctx context.Context, id string, params UpdateMem
 
 	affected, err := r.q.UpdateMemory(ctx, dbgen.UpdateMemoryParams{
 		Content:     current.Content,
-		Embedding:   embeddingToDBValue(current.Embedding),
 		Category:    current.Category,
 		WorkspaceID: nullInt64(current.WorkspaceID),
 		CodebaseID:  nullInt64(current.CodebaseID),
@@ -168,33 +158,6 @@ func (r *MemoryRepo) SearchLexical(ctx context.Context, query, category string, 
 	}
 
 	return mapDBMemories(rows), nil
-}
-
-func (r *MemoryRepo) ListWithEmbeddings(ctx context.Context, category string, limit int, workspaceID, codebaseID int64) ([]Memory, error) {
-	if limit <= 0 {
-		limit = 200
-	}
-
-	rows, err := r.q.ListMemoriesWithEmbeddingsFiltered(ctx, dbgen.ListMemoriesWithEmbeddingsFilteredParams{
-		Category:    strings.TrimSpace(category),
-		WorkspaceID: nullablePositiveInt64(workspaceID),
-		CodebaseID:  nullablePositiveInt64(codebaseID),
-		Limit:       int64(limit),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("list memories with embeddings: %w", err)
-	}
-
-	items := mapDBMemories(rows)
-	out := make([]Memory, 0, len(items))
-	for _, m := range items {
-		if len(m.Embedding) == 0 {
-			continue
-		}
-		out = append(out, m)
-	}
-
-	return out, nil
 }
 
 func (r *MemoryRepo) MarkRetrieved(ctx context.Context, id string, now int64) (Memory, error) {
@@ -274,56 +237,7 @@ func fromDBMemory(row dbgen.Memory) Memory {
 		item.SourceTask = row.SourceTask.String
 	}
 
-	item.Embedding = decodeEmbeddingAny(row.Embedding)
 	return item
-}
-
-func embeddingToDBValue(embedding []float32) any {
-	if len(embedding) == 0 {
-		return nil
-	}
-	buf := make([]byte, len(embedding)*4)
-	for i, v := range embedding {
-		bits := math.Float32bits(v)
-		binary.LittleEndian.PutUint32(buf[i*4:], bits)
-	}
-	return buf
-}
-
-func decodeEmbeddingAny(raw any) []float32 {
-	switch v := raw.(type) {
-	case nil:
-		return nil
-	case []byte:
-		return decodeEmbedding(v)
-	case string:
-		return decodeEmbedding([]byte(v))
-	default:
-		return nil
-	}
-}
-
-func decodeEmbedding(raw []byte) []float32 {
-	if len(raw) == 0 {
-		return nil
-	}
-
-	var out []float32
-	if err := json.Unmarshal(raw, &out); err == nil && len(out) > 0 {
-		return out
-	}
-
-	if len(raw)%4 != 0 {
-		return nil
-	}
-
-	out = make([]float32, 0, len(raw)/4)
-	for i := 0; i < len(raw); i += 4 {
-		bits := binary.LittleEndian.Uint32(raw[i : i+4])
-		v := math.Float32frombits(bits)
-		out = append(out, v)
-	}
-	return out
 }
 
 func nullString(v string) sql.NullString {

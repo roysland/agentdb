@@ -113,11 +113,9 @@ func Import(ctx context.Context, dstDB *sql.DB, opts ImportOptions) error {
 	// codebase_id, so no conflict is possible within this transaction.
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO chunks (codebase_id, file_path, chunk_key, language, kind, name,
-			signature, snippet, start_line, end_line, file_hash, indexed_at,
-			embedding, embedding_model, embedding_status)
+			signature, snippet, start_line, end_line, file_hash, indexed_at)
 		SELECT ?, file_path, chunk_key, language, kind, name,
-			signature, snippet, start_line, end_line, file_hash, indexed_at,
-			embedding, embedding_model, embedding_status
+			signature, snippet, start_line, end_line, file_hash, indexed_at
 		FROM artifact.chunks`, localCodebaseID); err != nil {
 		return fmt.Errorf("import failed: %w", err)
 	}
@@ -126,12 +124,10 @@ func Import(ctx context.Context, dstDB *sql.DB, opts ImportOptions) error {
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO symbols (codebase_id, file_path, language, kind, name, qualified_name,
 			receiver, signature, doc_comment, visibility, body_snippet,
-			start_line, end_line, file_hash, indexed_at,
-			embedding, embedding_model)
+			start_line, end_line, file_hash, indexed_at)
 		SELECT ?, file_path, language, kind, name, qualified_name,
 			receiver, signature, doc_comment, visibility, body_snippet,
-			start_line, end_line, file_hash, indexed_at,
-			embedding, embedding_model
+			start_line, end_line, file_hash, indexed_at
 		FROM artifact.symbols`, localCodebaseID); err != nil {
 		return fmt.Errorf("import failed: %w", err)
 	}
@@ -168,7 +164,7 @@ func Import(ctx context.Context, dstDB *sql.DB, opts ImportOptions) error {
 		INSERT OR REPLACE INTO meta (key, value)
 		SELECT key, value FROM artifact.meta
 		WHERE key != 'schema_version'
-		  AND key NOT IN ('has_embeddings', 'embedding_model', 'embedding_dimensions', 'closed_source', 'source_stripped')`); err != nil {
+		  AND key NOT IN ('closed_source', 'source_stripped')`); err != nil {
 		return fmt.Errorf("import metadata: %w", err)
 	}
 
@@ -220,7 +216,7 @@ func importCodebaseMeta(ctx context.Context, tx *sql.Tx, localCodebaseID int64) 
 	}
 
 	// Backward-compatible fallback for older artifacts that only carry global metadata.
-	scopedKeys := []string{"has_embeddings", "embedding_model", "embedding_dimensions", "closed_source", "source_stripped"}
+	scopedKeys := []string{"closed_source", "source_stripped"}
 	for _, k := range scopedKeys {
 		var v string
 		err := tx.QueryRowContext(ctx, "SELECT value FROM artifact.meta WHERE key = ?", k).Scan(&v)
@@ -236,12 +232,6 @@ func importCodebaseMeta(ctx context.Context, tx *sql.Tx, localCodebaseID int64) 
 			localCodebaseID, k, v); err != nil {
 			return err
 		}
-	}
-
-	// Default for very old artifacts that lacked embedding metadata entirely.
-	if _, err := tx.ExecContext(ctx, `
-		INSERT OR IGNORE INTO codebase_meta (codebase_id, key, value) VALUES (?, 'has_embeddings', 'false')`, localCodebaseID); err != nil {
-		return err
 	}
 
 	return nil

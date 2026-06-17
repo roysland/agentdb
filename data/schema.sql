@@ -25,22 +25,19 @@ CREATE TABLE IF NOT EXISTS codebase_meta (
 CREATE INDEX IF NOT EXISTS idx_codebase_meta_codebase ON codebase_meta(codebase_id);
 
 CREATE TABLE IF NOT EXISTS chunks (
-    id               INTEGER PRIMARY KEY AUTOINCREMENT,
-    codebase_id      INTEGER NOT NULL REFERENCES codebases(id) ON DELETE CASCADE,
-    file_path        TEXT NOT NULL,
-    chunk_key        TEXT NOT NULL,
-    language         TEXT NOT NULL,
-    kind             TEXT NOT NULL,
-    name             TEXT NOT NULL DEFAULT '',
-    signature        TEXT NOT NULL DEFAULT '',
-    snippet          TEXT NOT NULL,
-    start_line       INTEGER NOT NULL,
-    end_line         INTEGER NOT NULL,
-    file_hash        TEXT NOT NULL,
-    indexed_at       INTEGER NOT NULL,
-    embedding        F8_BLOB(384),
-    embedding_model  TEXT DEFAULT '',
-    embedding_status TEXT NOT NULL DEFAULT 'complete',
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    codebase_id INTEGER NOT NULL REFERENCES codebases(id) ON DELETE CASCADE,
+    file_path   TEXT NOT NULL,
+    chunk_key   TEXT NOT NULL,
+    language    TEXT NOT NULL,
+    kind        TEXT NOT NULL,
+    name        TEXT NOT NULL DEFAULT '',
+    signature   TEXT NOT NULL DEFAULT '',
+    snippet     TEXT NOT NULL,
+    start_line  INTEGER NOT NULL,
+    end_line    INTEGER NOT NULL,
+    file_hash   TEXT NOT NULL,
+    indexed_at  INTEGER NOT NULL,
     UNIQUE(codebase_id, chunk_key)
 );
 
@@ -50,7 +47,6 @@ CREATE INDEX IF NOT EXISTS idx_chunks_language ON chunks(language);
 CREATE INDEX IF NOT EXISTS idx_chunks_kind ON chunks(kind);
 CREATE INDEX IF NOT EXISTS idx_chunks_file_hash ON chunks(file_hash);
 CREATE INDEX IF NOT EXISTS idx_chunks_indexed_at ON chunks(indexed_at);
-CREATE INDEX IF NOT EXISTS idx_chunks_embedding_status ON chunks(embedding_status);
 
 -- FTS5 virtual table for full-text search over chunks
 CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
@@ -109,9 +105,7 @@ CREATE TABLE IF NOT EXISTS symbols (
     start_line      INTEGER NOT NULL,
     end_line        INTEGER NOT NULL,
     file_hash       TEXT NOT NULL,
-    indexed_at      INTEGER NOT NULL,
-    embedding       F8_BLOB(384),
-    embedding_model TEXT NOT NULL DEFAULT ''
+    indexed_at      INTEGER NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_symbols_codebase ON symbols(codebase_id);
@@ -177,7 +171,6 @@ CREATE INDEX IF NOT EXISTS idx_workspace_members_codebase ON workspace_members(c
 CREATE TABLE IF NOT EXISTS memories (
     id              TEXT PRIMARY KEY,
     content         TEXT NOT NULL,
-    embedding       F8_BLOB(384),
     category        TEXT NOT NULL,
     workspace_id    INTEGER REFERENCES workspaces(id) ON DELETE SET NULL,
     codebase_id     INTEGER REFERENCES codebases(id) ON DELETE SET NULL,

@@ -14,7 +14,6 @@ import (
 func newExportCmd(ctx context.Context) *cobra.Command {
 	var codebaseID int64
 	var output string
-	var includeEmbeddings bool
 	var stripSource bool
 
 	cmd := &cobra.Command{
@@ -28,10 +27,9 @@ func newExportCmd(ctx context.Context) *cobra.Command {
 			defer conn.Close()
 
 			opts := artifact.ExportOptions{
-				CodebaseID:        codebaseID,
-				OutputPath:        output,
-				IncludeEmbeddings: includeEmbeddings,
-				StripSource:       stripSource,
+				CodebaseID:  codebaseID,
+				OutputPath:  output,
+				StripSource: stripSource,
 			}
 
 			if err := artifact.Export(cmd.Context(), conn, opts); err != nil {
@@ -45,7 +43,6 @@ func newExportCmd(ctx context.Context) *cobra.Command {
 
 	cmd.Flags().Int64Var(&codebaseID, "codebase-id", 0, "ID of the codebase to export (required)")
 	cmd.Flags().StringVar(&output, "output", "", "Output path for the artifact file (required)")
-	cmd.Flags().BoolVar(&includeEmbeddings, "include-embeddings", false, "Include symbol and chunk embeddings in the exported artifact")
 	cmd.Flags().BoolVar(&stripSource, "strip-source", false, "Strip source-bearing text from exported chunks and symbols (snippet/doc_comment/body_snippet)")
 	_ = cmd.MarkFlagRequired("codebase-id")
 	_ = cmd.MarkFlagRequired("output")

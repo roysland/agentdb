@@ -9,22 +9,19 @@ import (
 )
 
 type Chunk struct {
-	ID              int64
-	CodebaseID      int64
-	FilePath        string
-	ChunkKey        string
-	Language        string
-	Kind            string
-	Name            string
-	Signature       string
-	Snippet         string
-	StartLine       int64
-	EndLine         int64
-	FileHash        string
-	IndexedAt       int64
-	Embedding       interface{}
-	EmbeddingModel  sql.NullString
-	EmbeddingStatus string
+	ID         int64
+	CodebaseID int64
+	FilePath   string
+	ChunkKey   string
+	Language   string
+	Kind       string
+	Name       string
+	Signature  string
+	Snippet    string
+	StartLine  int64
+	EndLine    int64
+	FileHash   string
+	IndexedAt  int64
 }
 
 type ChunksFt struct {
@@ -73,7 +70,6 @@ type IndexedFile struct {
 type Memory struct {
 	ID             string
 	Content        string
-	Embedding      interface{}
 	Category       string
 	WorkspaceID    sql.NullInt64
 	CodebaseID     sql.NullInt64
@@ -101,24 +97,22 @@ type SourceFile struct {
 }
 
 type Symbol struct {
-	ID             int64
-	CodebaseID     int64
-	FilePath       string
-	Language       string
-	Kind           string
-	Name           string
-	QualifiedName  string
-	Receiver       string
-	Signature      string
-	DocComment     string
-	Visibility     string
-	BodySnippet    string
-	StartLine      int64
-	EndLine        int64
-	FileHash       string
-	IndexedAt      int64
-	Embedding      interface{}
-	EmbeddingModel string
+	ID            int64
+	CodebaseID    int64
+	FilePath      string
+	Language      string
+	Kind          string
+	Name          string
+	QualifiedName string
+	Receiver      string
+	Signature     string
+	DocComment    string
+	Visibility    string
+	BodySnippet   string
+	StartLine     int64
+	EndLine       int64
+	FileHash      string
+	IndexedAt     int64
 }
 
 type Workspace struct {
