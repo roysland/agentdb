@@ -52,12 +52,16 @@ func TestNewProviderFromRuntime_OllamaDefaultBaseURL(t *testing.T) {
 	}
 }
 
-func TestNewProviderFromRuntime_UnsupportedProvider(t *testing.T) {
-	for _, name := range []string{"foo", "openai"} {
-		cfg := config.Runtime{EmbeddingProvider: name}
+func TestNewProviderFromRuntime_AnyProviderNameAccepted(t *testing.T) {
+	for _, name := range []string{"ollama", "openai", "llamacpp", "anything"} {
+		cfg := config.Runtime{
+			EmbeddingProvider: name,
+			EmbeddingBaseURL:  "http://localhost:8080/v1",
+			EmbeddingModel:    "nomic-embed-text",
+		}
 		_, err := NewProviderFromRuntime(cfg)
-		if err == nil {
-			t.Fatalf("provider %q: expected unsupported provider error", name)
+		if err != nil {
+			t.Fatalf("provider %q: expected success, got error: %v", name, err)
 		}
 	}
 }

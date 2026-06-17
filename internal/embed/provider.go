@@ -143,10 +143,6 @@ func NewProviderFromRuntime(cfg config.Runtime) (Provider, error) {
 		return NewDisabledProvider(), nil
 	}
 
-	if provider != "ollama" {
-		return nil, fmt.Errorf("unsupported embedding provider %q: only \"ollama\" is supported", cfg.EmbeddingProvider)
-	}
-
 	baseURL := strings.TrimSpace(cfg.EmbeddingBaseURL)
 	if baseURL == "" {
 		baseURL = "http://localhost:11434/v1"
