@@ -88,6 +88,7 @@ agentdb mcp
 | `locate-issue` | Locate likely impact area for a natural-language issue report |
 | `export` | Export a codebase to a portable `.agentdb` artifact |
 | `import` | Import a `.agentdb` artifact into the local database |
+| `memory` | Manage agent long-term memories |
 | `workspace create/add/remove/list` | Manage cross-repository workspaces |
 | `mcp` | Run MCP stdio server |
 | `version` | Print version |
@@ -116,8 +117,9 @@ During MCP initialization, agentdb also publishes a server description that fram
 - `get_imports` — List imports for a file
 - `project_overview` — High-level codebase summary (languages, LOC, packages, top files)
 - `locate_issue_impact_area` — Triage a natural-language issue description into ranked impact candidates using hybrid search and blast radius
+- `compare_capabilities` — Compare symbol coverage between two codebases (e.g., legacy vs. current); returns implemented/partial/missing/extra groups by file-path domain
 
-### Memory & Observability
+### Observability
 - `server_stats` — Runtime metrics: uptime, per-tool call counts, avg/p95 latency, error rates
 
 
@@ -134,15 +136,6 @@ During MCP initialization, agentdb also publishes a server description that fram
     "limit": 10
   }
 }
-```
-
-### CLI examples
-
-```bash
-agentdb search \
-  --query "incremental analyze" \
-  --mode lexical \
-  --codebase-id 1
 ```
 
 ## Filesystem Watching
@@ -341,7 +334,7 @@ Code is chunked at semantic boundaries (functions, classes, methods, modules) ra
 
 ## FTS5 Search
 
-Chunk search uses SQLite FTS5 for sub-linear lexical matching with BM25 ranking. The FTS5 index is kept synchronized with the chunks table via triggers.
+Chunk search uses SQLite FTS5 for lexical matching with BM25 ranking. The FTS5 index is kept synchronized with the chunks table via triggers.
 
 - **Lexical mode** — FTS5 MATCH with BM25 scoring
 - **Hybrid mode** — FTS5 candidates re-ranked by cosine similarity against embedding vectors
@@ -371,7 +364,7 @@ The `server_stats` MCP tool returns runtime metrics:
 
 ## Connection Architecture
 
-The MCP server uses a single persistent SQLite connection (`SetMaxOpenConns(1)`) with application-layer write serialization via `sync.Mutex`. This eliminates WAL contention and `SQLITE_BUSY` errors structurally.
+The MCP server uses a single persistent SQLite connection (`SetMaxOpenConns(1)`) with application-layer write serialization via `sync.Mutex`. This prevents WAL contention and `SQLITE_BUSY` errors.
 
 - All operations have strict context deadlines (3s writes, 5s reads)
 - Mutex acquisition timeout prevents indefinite blocking
@@ -504,7 +497,7 @@ SQLite database with these tables:
 | `edges` | Directed relationships (imports, calls, type usage, cross-repo links) |
 | `source_files` | File-level metadata (language, LOC, package) |
 | `chunks` | Semantic code chunks with optional embeddings and FTS5 index |
-| `chunks_fts` | FTS5 virtual table for sub-linear lexical search |
+| `chunks_fts` | FTS5 virtual table for lexical search |
 | `indexed_files` | File indexing state with parse status tracking |
 | `memories` | Agent long-term memory |
 | `workspaces` | Logical groupings of codebases |

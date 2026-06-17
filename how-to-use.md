@@ -109,7 +109,7 @@ For day-to-day development, run `watch` in the background. It monitors the direc
 
 ```bash
 # Re-index chunks only (fast, no symbol extraction)
-agentdb watch --codebase-id 1 --codebase-path /path/to/your/project --analyse=false
+agentdb watch --codebase-id 1 --codebase-path /path/to/your/project --analyze=false
 
 # Re-index and re-analyze (chunks + symbols + call graph)
 agentdb watch --codebase-id 1 --codebase-path /path/to/your/project

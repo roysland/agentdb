@@ -12,7 +12,7 @@
 
 ## Search
 
-- **FTS5 lexical search** — Sub-linear full-text search over code chunks using SQLite FTS5 with BM25 ranking
+- **FTS5 lexical search** — Full-text search over code chunks using SQLite FTS5 with BM25 ranking
 - **Hybrid search** — FTS5 candidate retrieval re-ranked by cosine similarity against embedding vectors
 - **Semantic search** — Natural language queries mapped to candidate symbols via vector similarity
 - **Blast radius analysis** — For any symbol, shows callers, callees, and file-level dependents
@@ -62,12 +62,12 @@
 ## Connection & Performance
 
 - **Single persistent connection** — One SQLite connection for the MCP server lifetime (no per-call open/close)
-- **Write serialization** — Application-layer mutex eliminates SQLITE_BUSY errors structurally
+- **Write serialization** — Application-layer mutex prevents SQLITE_BUSY errors
 - **Strict timeouts** — All operations have context deadlines (3s writes, 5s reads); no indefinite blocking
 - **Health-check reconnection** — Automatic recovery if the connection becomes unhealthy
 - **Incremental auto-vacuum** — Non-blocking page reclamation via `PRAGMA auto_vacuum=INCREMENTAL`
-- **SHA-256 hashing** — Collision-resistant file change detection with streaming for large files
-- **Legacy hash migration** — MD5 hashes transparently upgraded to SHA-256 on next incremental run
+- **SHA-256 hashing** — File change detection with streaming for large files
+- **Legacy hash migration** — MD5 hashes upgraded to SHA-256 on next incremental run
 
 ## Text Fallback Chunking
 
@@ -82,6 +82,10 @@
 - **Debounce window** — Configurable debounce (default 500 ms) batches rapid edits into a single re-index pass
 - **Optional re-analysis** — `--analyze` flag also re-extracts symbols and edges after each re-index
 - **Graceful shutdown** — SIGINT/SIGTERM waits for any in-progress re-index to complete before exiting
+
+## Capability Comparison
+
+- **`compare_capabilities` MCP tool** — Compares symbol coverage between two codebases by file-path domain; returns implemented/partial/missing/extra groups. Only exposes symbol name, kind, and domain — no signatures.
 
 ## Issue Triage
 
@@ -98,7 +102,7 @@
 ## MCP Server
 
 - **JSON-RPC stdio protocol** — Standard MCP interface for AI agent integration
-- **17 tools** — Search, symbol lookup, call graph traversal, codebase management, observability
+- **18 tools** — Search, symbol lookup, call graph traversal, codebase management, capability comparison, observability
 - **Workspace-scoped queries** — Optional `workspace_id` parameter fans out across multiple codebases
 - **Embedding pipeline** — Async embedding computation with status tracking and retry on failure
 
