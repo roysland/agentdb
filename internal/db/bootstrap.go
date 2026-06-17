@@ -38,18 +38,24 @@ func BootstrapSchema(ctx context.Context, db *sql.DB, schemaPath string) (Bootst
 
 	stmts := splitStatements(string(content))
 	count := 0
+	fts5Unavailable := false
 
 	for _, stmt := range stmts {
 		if stmt == "" {
 			continue
 		}
+		// If FTS5 is unavailable, skip any statement that references chunks_fts.
+		// This covers both the virtual table and the triggers that reference it —
+		// SQLite allows creating triggers against nonexistent tables, so they must
+		// be skipped proactively rather than caught on error.
+		if fts5Unavailable && strings.Contains(stmt, "chunks_fts") {
+			continue
+		}
 		if _, err := db.ExecContext(ctx, stmt); err != nil {
-			// Gracefully skip FTS5-related statements if the module is not available.
-			// The search layer will fall back to in-memory scan per Requirement 1.5.
 			if isModuleNotFoundError(err) {
+				fts5Unavailable = true
 				continue
 			}
-			// Skip trigger creation if triggers are not supported or depend on FTS5
 			if isTriggerUnsupportedError(err, stmt) {
 				continue
 			}

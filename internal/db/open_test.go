@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 
 	"github.com/roysland/agentdb/internal/config"
 )
@@ -21,12 +21,12 @@ func TestResolveDriver(t *testing.T) {
 		{
 			name: "auto defaults to sqlite3",
 			cfg:  config.Runtime{DatabaseDriver: "auto", DatabaseURL: "agentdb.sqlite"},
-			want: "sqlite3",
+			want: "sqlite",
 		},
 		{
 			name: "explicit turso maps to sqlite3",
 			cfg:  config.Runtime{DatabaseDriver: "turso", DatabaseURL: "agentdb.sqlite"},
-			want: "sqlite3",
+			want: "sqlite",
 		},
 		{
 			name: "unsupported explicit driver is preserved for validation",
@@ -53,7 +53,7 @@ func TestOpenRejectsNewerDatabaseSchemaVersion(t *testing.T) {
 	dbPath := t.TempDir() + "/schema_mismatch.db"
 	cfg := config.Runtime{
 		DatabaseURL:              dbPath,
-		DatabaseDriver:           "sqlite3",
+		DatabaseDriver:           "sqlite",
 		SuppressBootstrapWarning: true,
 	}
 
@@ -77,7 +77,7 @@ func TestOpenRejectsNewerDatabaseSchemaVersion(t *testing.T) {
 
 func TestMigrateSchemaUpsertsCurrentSchemaVersion(t *testing.T) {
 	ctx := context.Background()
-	database, err := sql.Open("sqlite3", t.TempDir()+"/migrate_upsert.db")
+	database, err := sql.Open("sqlite", t.TempDir()+"/migrate_upsert.db")
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}

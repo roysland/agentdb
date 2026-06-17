@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 
 	"github.com/roysland/agentdb/internal/config"
 	"github.com/roysland/agentdb/internal/db"
@@ -24,7 +24,7 @@ func TestMemoryFlow(t *testing.T) {
 	tmpDB := t.TempDir() + "/test_memory.db"
 	dbConn, err := db.Open(ctx, config.Runtime{
 		DatabaseURL:              tmpDB,
-		DatabaseDriver:           "sqlite3",
+		DatabaseDriver:           "sqlite",
 		SuppressBootstrapWarning: true,
 	})
 	if err != nil {

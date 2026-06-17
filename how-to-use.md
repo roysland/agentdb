@@ -20,7 +20,7 @@ Then place the binary and a `manifest.json` in `~/.agentdb/plugins/agentdb-parse
 
 ## Building Locally
 
-Main binary:
+Main binary (pure Go, no CGo):
 ```bash
 go build -o ~/.local/bin/agentdb .
 ```

@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"testing"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 func TestSplitStatements(t *testing.T) {
@@ -115,7 +115,7 @@ func findSubstring(s, substr string) bool {
 func TestMigrateSchema_FTS5AndNewColumns(t *testing.T) {
 	// Open a temporary SQLite database using the turso driver
 	tmpDB := t.TempDir() + "/test_migrate.db"
-	database, err := sql.Open("sqlite3", tmpDB)
+	database, err := sql.Open("sqlite", tmpDB)
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}

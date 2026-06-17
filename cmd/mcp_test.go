@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 
 	internaldb "github.com/roysland/agentdb/internal/db"
 	"github.com/roysland/agentdb/internal/store"
@@ -20,7 +20,7 @@ import (
 
 func TestMCPSearchCompactsOversizedSnippets(t *testing.T) {
 	ctx := context.Background()
-	database, err := sql.Open("sqlite3", t.TempDir()+"/mcp_search.db")
+	database, err := sql.Open("sqlite", t.TempDir()+"/mcp_search.db")
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestMCPSearchCompactsOversizedSnippets(t *testing.T) {
 // inline JSON text in content[0].text, never as a file-system path.
 func TestMCPSearchResponseIsInline(t *testing.T) {
 	ctx := context.Background()
-	database, err := sql.Open("sqlite3", t.TempDir()+"/mcp_inline.db")
+	database, err := sql.Open("sqlite", t.TempDir()+"/mcp_inline.db")
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}

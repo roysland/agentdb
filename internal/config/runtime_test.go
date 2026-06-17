@@ -191,10 +191,10 @@ func TestResolveDatabaseURLIgnoresLegacyEnv(t *testing.T) {
 }
 
 func TestResolveDatabaseDriverFromCanonicalEnv(t *testing.T) {
-	t.Setenv("AGENTDB_DB_DRIVER", "sqlite3")
+	t.Setenv("AGENTDB_DB_DRIVER", "sqlite")
 
 	resolved := Resolve(Runtime{})
-	if resolved.DatabaseDriver != "sqlite3" {
+	if resolved.DatabaseDriver != "sqlite" {
 		t.Fatalf("database_driver = %q, want sqlite3", resolved.DatabaseDriver)
 	}
 }
@@ -208,13 +208,13 @@ func TestResolveDatabaseDriverFromConfigWhenEnvMissing(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o755); err != nil {
 		t.Fatalf("mkdir config dir: %v", err)
 	}
-	content := "AGENTDB_DB_DRIVER = \"sqlite3\"\n"
+	content := "AGENTDB_DB_DRIVER = \"sqlite\"\n"
 	if err := os.WriteFile(cfgPath, []byte(content), 0o644); err != nil {
 		t.Fatalf("write config.toml: %v", err)
 	}
 
 	resolved := Resolve(Runtime{})
-	if resolved.DatabaseDriver != "sqlite3" {
-		t.Fatalf("database_driver = %q, want sqlite3", resolved.DatabaseDriver)
+	if resolved.DatabaseDriver != "sqlite" {
+		t.Fatalf("database_driver = %q, want sqlite", resolved.DatabaseDriver)
 	}
 }

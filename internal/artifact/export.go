@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 func buildAttachDatabaseSQL(path string) string {
@@ -45,7 +45,7 @@ func Export(ctx context.Context, srcDB *sql.DB, opts ExportOptions) error {
 	}
 
 	// Create new SQLite file and apply artifact DDL.
-	artifactDB, err := sql.Open("sqlite3", opts.OutputPath)
+	artifactDB, err := sql.Open("sqlite", opts.OutputPath)
 	if err != nil {
 		return fmt.Errorf("create artifact: %w", err)
 	}

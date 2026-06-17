@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 
 	"github.com/roysland/agentdb/internal/config"
 	"github.com/roysland/agentdb/internal/observe"
@@ -204,7 +204,7 @@ func ensureCoreSchemaOnConn(ctx context.Context, db *sql.DB, cfg config.Runtime)
 // openSingleConn opens a single database connection with SetMaxOpenConns(1).
 func openSingleConn(ctx context.Context, cfg config.Runtime) (*sql.DB, error) {
 	driver := resolveDriver(cfg)
-	if driver != "sqlite3" {
+	if driver != "sqlite" {
 		return nil, fmt.Errorf("unsupported driver: %s", driver)
 	}
 
@@ -217,7 +217,7 @@ func openSingleConn(ctx context.Context, cfg config.Runtime) (*sql.DB, error) {
 		}
 	}
 
-	db, err := sql.Open("sqlite3", cfg.DatabaseURL)
+	db, err := sql.Open("sqlite", cfg.DatabaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}

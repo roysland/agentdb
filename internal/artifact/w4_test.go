@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 func TestBuildAttachDatabaseSQL_EscapesSingleQuotes(t *testing.T) {
@@ -21,7 +21,7 @@ func TestExportImport_PreservesTargetCodebaseID(t *testing.T) {
 	ctx := context.Background()
 	tmp := t.TempDir()
 
-	srcDB, err := sql.Open("sqlite3", tmp+"/src.db")
+	srcDB, err := sql.Open("sqlite", tmp+"/src.db")
 	if err != nil {
 		t.Fatalf("open src db: %v", err)
 	}
@@ -46,7 +46,7 @@ func TestExportImport_PreservesTargetCodebaseID(t *testing.T) {
 		t.Fatalf("export: %v", err)
 	}
 
-	artifactDB, err := sql.Open("sqlite3", artifactPath)
+	artifactDB, err := sql.Open("sqlite", artifactPath)
 	if err != nil {
 		t.Fatalf("open artifact db: %v", err)
 	}
@@ -60,7 +60,7 @@ func TestExportImport_PreservesTargetCodebaseID(t *testing.T) {
 		t.Fatalf("expected exported target_codebase_id=42, got %#v", exportedTarget)
 	}
 
-	dstDB, err := sql.Open("sqlite3", tmp+"/dst.db")
+	dstDB, err := sql.Open("sqlite", tmp+"/dst.db")
 	if err != nil {
 		t.Fatalf("open dst db: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestExportImport_PreservesTargetCodebaseID(t *testing.T) {
 
 func TestArtifactDDL_IncludesWave4SchemaParity(t *testing.T) {
 	ctx := context.Background()
-	db, err := sql.Open("sqlite3", t.TempDir()+"/artifact.db")
+	db, err := sql.Open("sqlite", t.TempDir()+"/artifact.db")
 	if err != nil {
 		t.Fatalf("open artifact db: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestExport_StripSourceBehavior(t *testing.T) {
 	ctx := context.Background()
 	tmp := t.TempDir()
 
-	srcDB, err := sql.Open("sqlite3", tmp+"/src.db")
+	srcDB, err := sql.Open("sqlite", tmp+"/src.db")
 	if err != nil {
 		t.Fatalf("open src db: %v", err)
 	}
@@ -145,7 +145,7 @@ func TestExport_StripSourceBehavior(t *testing.T) {
 			t.Fatalf("export keep source: %v", err)
 		}
 
-		artifactDB, err := sql.Open("sqlite3", artifactPath)
+		artifactDB, err := sql.Open("sqlite", artifactPath)
 		if err != nil {
 			t.Fatalf("open artifact db: %v", err)
 		}
@@ -187,7 +187,7 @@ func TestExport_StripSourceBehavior(t *testing.T) {
 			t.Fatalf("export strip source: %v", err)
 		}
 
-		artifactDB, err := sql.Open("sqlite3", artifactPath)
+		artifactDB, err := sql.Open("sqlite", artifactPath)
 		if err != nil {
 			t.Fatalf("open artifact db: %v", err)
 		}

@@ -7,13 +7,13 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 func TestMemoryEmbeddingWriteIsBinary(t *testing.T) {
 	ctx := context.Background()
 	dbPath := t.TempDir() + "/memory_binary.db"
-	database, err := sql.Open("sqlite3", dbPath)
+	database, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestMemoryEmbeddingWriteIsBinary(t *testing.T) {
 func TestMemoryEmbeddingReadBackwardCompatibleJSON(t *testing.T) {
 	ctx := context.Background()
 	dbPath := t.TempDir() + "/memory_json.db"
-	database, err := sql.Open("sqlite3", dbPath)
+	database, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestMemoryEmbeddingReadBackwardCompatibleJSON(t *testing.T) {
 func TestMemoryScopeFilteringAndBulkRetrieve(t *testing.T) {
 	ctx := context.Background()
 	dbPath := t.TempDir() + "/memory_scope.db"
-	database, err := sql.Open("sqlite3", dbPath)
+	database, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}

@@ -18,7 +18,7 @@ If agents can grep it in under 10 tool calls, this is overhead. For everything e
 go install github.com/roysland/agentdb@latest
 ```
 
-Requires Go 1.24+.
+Requires Go 1.25+. Pure Go, no CGo, no build tags needed.
 
 Configuration is read from ~/.config/agentdb/config.toml (or $XDG_CONFIG_HOME/agentdb/config.toml) with precedence:
 flags > environment variables > config.toml > built-in defaults.
@@ -505,12 +505,12 @@ SQLite database with these tables:
 
 # Build locally
 
-Main binary (pure Go):
+Main binary (pure Go, no CGo):
 ```bash
 go build -o ~/.local/bin/agentdb .
 ```
 
-Parser plugin (requires CGo):
+Parser plugin:
 ```bash
 CGO_ENABLED=1 go build -tags treesitter -o ~/.local/bin/agentdb-parsers ./plugins/parsers/
 ```

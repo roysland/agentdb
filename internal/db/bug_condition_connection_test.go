@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 // =============================================================================
@@ -32,7 +32,7 @@ func TestBugCondition_GoroutineLeak(t *testing.T) {
 	// Create a minimal ConnectionHandle directly (bypassing NewConnectionHandle
 	// which requires PRAGMAs that may not be supported in all environments)
 	tmpDB := t.TempDir() + "/goroutine_leak_test.db"
-	database, err := sql.Open("sqlite3", tmpDB)
+	database, err := sql.Open("sqlite", tmpDB)
 	if err != nil {
 		t.Fatalf("failed to open database: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestBugCondition_GoroutineLeak(t *testing.T) {
 
 func TestBugCondition_WriteTimeout(t *testing.T) {
 	tmpDB := t.TempDir() + "/write_timeout_test.db"
-	database, err := sql.Open("sqlite3", tmpDB)
+	database, err := sql.Open("sqlite", tmpDB)
 	if err != nil {
 		t.Fatalf("failed to open database: %v", err)
 	}

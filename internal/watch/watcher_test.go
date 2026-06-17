@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 
 	internaldb "github.com/roysland/agentdb/internal/db"
 	"github.com/roysland/agentdb/internal/observe"
@@ -32,7 +32,7 @@ func (p *countingProvider) ModelName() string { return "test-model" }
 func setupWatcherTestDB(t *testing.T, codebasePath string) (db *sql.DB, codebaseID int64) {
 	t.Helper()
 
-	database, err := sql.Open("sqlite3", t.TempDir()+"/watcher_test.db")
+	database, err := sql.Open("sqlite", t.TempDir()+"/watcher_test.db")
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
