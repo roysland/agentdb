@@ -241,7 +241,7 @@ func mcpTools() []map[string]any {
 	tools := []map[string]any{
 		{
 			"name":        "search",
-			"description": "Use when: ranked retrieval across memories/chunks. Requires: query (and codebase_id when source includes chunks). Avoid when: you need exact graph relations or definition-only lookup.",
+			"description": "Searches indexed code chunks and stored memories using BM25 lexical ranking. Returns ranked structured results with file paths and line numbers. Requires: query. Optional: codebase_id, source (memories/chunks/both), limit.",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -258,7 +258,7 @@ func mcpTools() []map[string]any {
 		},
 		{
 			"name":        "register_codebase",
-			"description": "Use when: onboarding a new repository path. Requires: path. Avoid when: the codebase is already registered and you only need existing IDs.",
+			"description": "Registers a repository path and returns its codebase_id, required by all scoped tools. Run once per repository before indexing or analyzing. Requires: path. Optional: name.",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -270,12 +270,12 @@ func mcpTools() []map[string]any {
 		},
 		{
 			"name":        "list_codebases",
-			"description": "Use when: you need available codebase IDs/names before scoped calls. Requires: none. Avoid when: you need code intelligence results directly.",
+			"description": "Returns all registered codebase IDs, names, and paths as structured data. Use to resolve a codebase_id. Requires: none.",
 			"inputSchema": map[string]any{"type": "object"},
 		},
 		{
 			"name":        "index_codebase",
-			"description": "Use when: building or refreshing chunk retrieval index after code changes. Requires: codebase_id and codebase_path. Avoid when: you need symbol/call graph data.",
+			"description": "Builds or refreshes the chunk retrieval index used by search. Run once after code changes; use incremental=true for updates. Requires: codebase_id, codebase_path.",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -289,7 +289,7 @@ func mcpTools() []map[string]any {
 		},
 		{
 			"name":        "index_status",
-			"description": "Use when: checking chunk index status. Requires: codebase_id. Avoid when: data is missing/stale and you should run index_codebase instead.",
+			"description": "Returns the chunk index readiness status for a codebase as structured data. Requires: codebase_id.",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -319,7 +319,7 @@ func mcpTools() []map[string]any {
 		// },
 		{
 			"name":        "analyze_codebase",
-			"description": "Use when: building symbol/edge graph for code intelligence tools. Requires: codebase_id and codebase_path. Avoid when: you only need chunk retrieval.",
+			"description": "Builds the symbol and call-graph index that powers find_symbol, get_callers, get_callees, find_usages, and get_imports. Run once before using graph navigation tools; use incremental=true for updates. Requires: codebase_id, codebase_path.",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -332,7 +332,7 @@ func mcpTools() []map[string]any {
 		},
 		{
 			"name":        "find_symbol",
-			"description": "Use when: locating exact symbol definitions by name/kind. Requires: name plus codebase_id or workspace_id. Avoid when: intent is conceptual similarity.",
+			"description": "Returns the exact file path, line range, and signature for any named symbol — function, type, method, or constant — in one deterministic call. No file reading needed. Requires: name. Optional: codebase_id, workspace_id (searches all registered repos), kind.",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -346,7 +346,7 @@ func mcpTools() []map[string]any {
 		},
 		{
 			"name":        "find_usages",
-			"description": "Use when: mapping reference spread/impact for a symbol. Requires: name plus codebase_id or workspace_id. Avoid when: you only need direct inbound callers.",
+			"description": "Returns every reference to a symbol across the entire codebase — complete cross-file and cross-repo spread — in one call, with precise file paths and line numbers. No file scanning needed. Requires: name. Optional: codebase_id, workspace_id.",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -359,7 +359,7 @@ func mcpTools() []map[string]any {
 		},
 		{
 			"name":        "get_file_symbols",
-			"description": "Use when: getting file-level symbol inventory in source order. Requires: codebase_id and file_path. Avoid when: you need cross-file/workspace-wide lookup.",
+			"description": "Returns the complete structured symbol inventory of a file — every function, type, method, and constant with line numbers and signatures — without reading the file. One call replaces a full file read for structural understanding. Requires: codebase_id, file_path.",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -371,7 +371,7 @@ func mcpTools() []map[string]any {
 		},
 		{
 			"name":        "get_callers",
-			"description": "Use when: tracing inbound callers to a target symbol. Requires: name plus codebase_id or workspace_id. Avoid when: you need outbound callees.",
+			"description": "Returns all functions that call a given symbol across the entire project, with precise file paths and line numbers, in one deterministic query. No file scanning needed. Requires: name. Optional: codebase_id, workspace_id (searches all registered repos).",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -384,7 +384,7 @@ func mcpTools() []map[string]any {
 		},
 		{
 			"name":        "get_callees",
-			"description": "Use when: tracing outbound callees from one qualified symbol. Requires: codebase_id and qualified_name. Avoid when: you need symbol discovery by name.",
+			"description": "Returns the complete outbound call graph of a function — every symbol it calls — as structured data with file paths and line numbers. No file reading needed. Requires: codebase_id, qualified_name.",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -396,7 +396,7 @@ func mcpTools() []map[string]any {
 		},
 		{
 			"name":        "get_imports",
-			"description": "Use when: inspecting file-scoped imports/dependencies. Requires: codebase_id and file_path. Avoid when: you need call graph or symbol definitions.",
+			"description": "Returns the complete import and dependency list for a file as structured data. One call replaces reading the file to understand its dependencies. Requires: codebase_id, file_path.",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -408,7 +408,7 @@ func mcpTools() []map[string]any {
 		},
 		{
 			"name":        "project_overview",
-			"description": "Use when: generating first-pass codebase briefing and topology summary. Requires: codebase_id. Avoid when: you need pinpoint symbol-level answers.",
+			"description": "Returns a complete structured summary of the codebase — file count, symbol distribution by kind, package topology — without reading any files. The fastest way to orient at session start. Requires: codebase_id.",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -419,7 +419,7 @@ func mcpTools() []map[string]any {
 		},
 		{
 			"name":        "server_stats",
-			"description": "Use when: diagnosing MCP runtime health and tool-level throughput/errors. Requires: none (optional reset). Avoid when: querying codebase content.",
+			"description": "Returns MCP runtime health metrics — per-tool call counts, latencies, error rates — as structured data. Requires: none. Optional: reset (boolean).",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -431,7 +431,7 @@ func mcpTools() []map[string]any {
 
 	tools = append(tools, map[string]any{
 		"name":        "locate_issue_impact_area",
-		"description": "Use when: triaging natural-language issues into ranked impact candidates. Requires: issue_text and scope (codebase_id/workspace_id). Avoid when: exact known-symbol lookup is enough.",
+		"description": "Maps a natural-language issue description to the ranked set of symbols most likely involved, with file paths, line ranges, and confidence scores — without reading files. Requires: issue_text. Optional: codebase_id, workspace_id, limit.",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -446,7 +446,7 @@ func mcpTools() []map[string]any {
 
 	tools = append(tools, map[string]any{
 		"name":        "codebase_context",
-		"description": "Use when: bootstrapping a session with README/design/agent guidance docs. Requires: scope (codebase_id/workspace_id). Avoid when: you need ranked snippet retrieval.",
+		"description": "Returns README, design docs, and agent guidance documents stored for a codebase as structured content. Fastest way to orient at session start before structural queries. Requires: codebase_id or workspace_id.",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -458,7 +458,7 @@ func mcpTools() []map[string]any {
 
 	tools = append(tools, map[string]any{
 		"name":        "compare_capabilities",
-		"description": "Use when: checking feature-parity between two codebases (e.g., legacy vs. current). Returns implemented/partial/missing/extra capability groups by file-path domain. Requires: codebase_a_id (reference) and codebase_b_id (target). Only exposes symbol name, kind, and domain — no signatures.",
+		"description": "Returns structured feature-parity data between two codebases — implemented, partial, missing, and extra capability groups by file-path domain. Cross-repo comparison in one call. Requires: codebase_a_id (reference), codebase_b_id (target).",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -472,7 +472,7 @@ func mcpTools() []map[string]any {
 	if isExperimentalEnabled() {
 		tools = append(tools, map[string]any{
 			"name":        "resolve_code_query",
-			"description": "Use when: code-intel intent is broad/ambiguous and you want one orchestrated response. Requires: query and codebase_id. Avoid when: one specific primitive with tight control is preferred.",
+			"description": "Orchestrates multiple code-intel primitives into a single structured answer for broad or ambiguous queries. One call replaces a multi-step sequence. Requires: query, codebase_id. Optional: workspace_id.",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
