@@ -1,0 +1,92 @@
+sources:
+  - name: fsnotify
+    url: https://github.com/fsnotify/fsnotify
+    usage_context: "TODO: describe how this project uses fsnotify"
+
+  - name: uuid
+    url: https://github.com/google/uuid
+    usage_context: "TODO: describe how this project uses uuid"
+
+  - name: tiktoken-go
+    url: https://github.com/pkoukk/tiktoken-go
+    usage_context: "TODO: describe how this project uses tiktoken-go"
+
+  - name: go-gitignore
+    url: https://github.com/sabhiram/go-gitignore
+    usage_context: "TODO: describe how this project uses go-gitignore"
+
+  - name: go-tree-sitter
+    url: https://github.com/smacker/go-tree-sitter
+    usage_context: "TODO: describe how this project uses go-tree-sitter"
+
+  - name: cobra
+    url: https://github.com/spf13/cobra
+    usage_context: "TODO: describe how this project uses cobra"
+
+  - name: yaml.v3
+    url: https://gopkg.in/yaml.v3
+    usage_context: "TODO: describe how this project uses yaml.v3"
+
+  - name: sqlite
+    url: https://modernc.org/sqlite
+    usage_context: "TODO: describe how this project uses sqlite"
+
+  - name: regexp2
+    url: https://github.com/dlclark/regexp2
+    usage_context: "TODO: describe how this project uses regexp2"
+
+  - name: go-humanize
+    url: https://github.com/dustin/go-humanize
+    usage_context: "TODO: describe how this project uses go-humanize"
+
+  - name: mousetrap
+    url: https://github.com/inconshreveable/mousetrap
+    usage_context: "TODO: describe how this project uses mousetrap"
+
+  - name: pretty
+    url: https://github.com/kr/pretty
+    usage_context: "TODO: describe how this project uses pretty"
+
+  - name: go-isatty
+    url: https://github.com/mattn/go-isatty
+    usage_context: "TODO: describe how this project uses go-isatty"
+
+  - name: go-strftime
+    url: https://github.com/ncruces/go-strftime
+    usage_context: "TODO: describe how this project uses go-strftime"
+
+  - name: bigfft
+    url: https://github.com/remyoudompheng/bigfft
+    usage_context: "TODO: describe how this project uses bigfft"
+
+  - name: go-internal
+    url: https://github.com/rogpeppe/go-internal
+    usage_context: "TODO: describe how this project uses go-internal"
+
+  - name: pflag
+    url: https://github.com/spf13/pflag
+    usage_context: "TODO: describe how this project uses pflag"
+
+  - name: testify
+    url: https://github.com/stretchr/testify
+    usage_context: "TODO: describe how this project uses testify"
+
+  - name: sys
+    url: https://golang.org/x/sys
+    usage_context: "TODO: describe how this project uses sys"
+
+  - name: check.v1
+    url: https://gopkg.in/check.v1
+    usage_context: "TODO: describe how this project uses check.v1"
+
+  - name: libc
+    url: https://modernc.org/libc
+    usage_context: "TODO: describe how this project uses libc"
+
+  - name: mathutil
+    url: https://modernc.org/mathutil
+    usage_context: "TODO: describe how this project uses mathutil"
+
+  - name: memory
+    url: https://modernc.org/memory
+    usage_context: "TODO: describe how this project uses memory"

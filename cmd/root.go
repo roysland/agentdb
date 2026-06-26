@@ -46,6 +46,15 @@ func newRootCmd(ctx context.Context) *cobra.Command {
 	root.AddCommand(newWatchCmd(ctx))
 	root.AddCommand(newWorkspaceCmd(ctx))
 	root.AddCommand(newVersionCmd())
+	root.AddCommand(newSearchCmd(ctx))
+	root.AddCommand(newFindSymbolCmd(ctx))
+	root.AddCommand(newFindUsagesCmd(ctx))
+	root.AddCommand(newGetCallersCmd(ctx))
+	root.AddCommand(newGetCalleesCmd(ctx))
+	root.AddCommand(newGetFileSymbolsCmd(ctx))
+	root.AddCommand(newGetImportsCmd(ctx))
+	root.AddCommand(newProjectOverviewCmd(ctx))
+	root.AddCommand(newIndexStatusCmd(ctx))
 
 	return root
 }
