@@ -1,33 +1,30 @@
 ---
-commit: 7a5101573c90ae500f0bf680e308d0e8b7593463
+commit: ca9fc700d18146947f08e753cfc9c793963f987b
 description: 'Codebase knowledge for module: .'
 files:
 - main.go
 - schema.go
 tags:
 - module
-timestamp: '2026-06-24'
+timestamp: '2026-06-26'
 title: .
 type: Module
 ---
 
-# Module: . (Root)
-
 ## What it does
 
-This module initializes the `agentdb` application by executing the CLI entry point defined in the `cmd` package. It also loads an embedded SQL schema from `data/schema.sql` at startup and makes it available to the database layer.
+agentdb is a Go CLI tool that provides an agent with a persistent, searchable memory store. It embeds a SQL schema at startup and delegates all command execution to the `cmd` package.
 
 ## Public interface
 
-- `func main()` — Application entry point; calls `cmd.Execute()` and exits with code 1 on error.
-- Package-level `init()` — Reads embedded schema file and registers it via `db.SetEmbeddedSchema()`.
+- `main()` — entry point; calls `cmd.Execute(context.Background())` and exits with code 1 on error.
+- `init()` (in schema.go) — reads the embedded `data/schema.sql` file and registers it with `db.SetEmbeddedSchema`. Falls back to disk reads if the embedded file is unavailable.
 
 ## Key invariants
 
-- `main()` must be the only entry point; it never returns without either `cmd.Execute()` succeeding or calling `os.Exit(1)`.
-- The embedded schema file `data/schema.sql` must exist at build time (the `//go:embed` directive will fail the build otherwise).
-- `db.SetEmbeddedSchema()` is called exactly once during initialization, before any database operations occur.
+- The schema must be available either via `go:embed` at compile time or from disk at runtime; a warning is printed if the embedded version cannot be loaded.
+- `db.SetEmbeddedSchema` is called from an `init()` function, meaning it runs before `main()` and before any command handler accesses the database.
 
 ## Non-obvious decisions
 
-- **Fallback to disk reads for schema**: The `init()` function explicitly handles the case where reading the embedded schema fails, printing a warning to stderr and continuing without calling `db.SetEmbeddedSchema()`. This is unusual because `go:embed` directives make the embedded file mandatory at compile time — if the file is missing, the build itself fails. The fallback suggests either a secondary build pipeline that strips embedded data, or a runtime expectation that the schema file exists on disk for development/debugging purposes despite the embed directive.
+- **Schema registration via `init()` rather than explicit setup call**: The embedded schema is injected into the `db` package's global state before `main` runs, so downstream commands never need to pass the schema explicitly. This couples schema loading to package initialization order, which is idiomatic for Go but means the schema cannot be reloaded or swapped without restarting the process.

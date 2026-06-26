@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/roysland/agentdb/internal/filefilter"
 	"github.com/roysland/agentdb/internal/observe"
 	"github.com/roysland/agentdb/internal/store"
 )
@@ -234,9 +235,18 @@ func LocateIssue(ctx context.Context, db *sql.DB, cfg LocateIssueConfig, logger 
 	}
 	maxAbsBM25 := MaxAbsBM25Score(allFTSResults)
 
-	// Add FTS5 candidates.
+	// Add FTS5 candidates, filtering test/non-impl files and import-only chunks.
 	for _, fr := range ftsResults {
 		for _, r := range fr.results {
+			if filefilter.IsTestFile(r.FilePath) {
+				continue
+			}
+			if !filefilter.IsImplFile(r.FilePath) {
+				continue
+			}
+			if strings.ToLower(r.Kind) == "import" {
+				continue
+			}
 			key := candidateKey{codebaseID: fr.codebaseID, filePath: r.FilePath, name: r.Name}
 			if existing, ok := candidateMap[key]; ok {
 				// Keep the better BM25 score (more negative = better)
@@ -259,6 +269,9 @@ func LocateIssue(ctx context.Context, db *sql.DB, cfg LocateIssueConfig, logger 
 		}
 	}
 
+	// Extract query terms for lexical re-ranking.
+	queryTerms := extractQueryTerms(cfg.IssueText)
+
 	// Compute confidence scores.
 	type scoredCandidate struct {
 		candidate  *candidate
@@ -269,6 +282,7 @@ func LocateIssue(ctx context.Context, db *sql.DB, cfg LocateIssueConfig, logger 
 		normalizedBM25 := NormalizeBM25(c.bm25Score, maxAbsBM25)
 		confidence := ComputeConfidenceScoreLexicalOnly(normalizedBM25)
 		confidence = adjustLocateIssueConfidence(c, confidence)
+		confidence = applyLexicalReRanking(c, confidence, queryTerms)
 		scored = append(scored, scoredCandidate{candidate: c, confidence: confidence})
 	}
 
@@ -341,6 +355,57 @@ func LocateIssue(ctx context.Context, db *sql.DB, cfg LocateIssueConfig, logger 
 	}
 
 	return results, "", nil
+}
+
+// extractQueryTerms splits an issue text into lowercase tokens, dropping common
+// stop words so that only discriminating terms are used for re-ranking.
+func extractQueryTerms(text string) []string {
+	stopWords := map[string]struct{}{
+		"a": {}, "an": {}, "the": {}, "and": {}, "or": {}, "in": {}, "of": {},
+		"to": {}, "is": {}, "it": {}, "for": {}, "on": {}, "at": {}, "by": {},
+		"with": {}, "from": {}, "that": {}, "this": {}, "are": {}, "be": {},
+		"as": {}, "was": {}, "not": {}, "but": {}, "if": {}, "we": {},
+	}
+	fields := strings.Fields(strings.ToLower(text))
+	seen := make(map[string]struct{}, len(fields))
+	out := make([]string, 0, len(fields))
+	for _, f := range fields {
+		// Strip punctuation
+		f = strings.Trim(f, ".,;:!?\"'()")
+		if len(f) < 3 {
+			continue
+		}
+		if _, stop := stopWords[f]; stop {
+			continue
+		}
+		if _, dup := seen[f]; dup {
+			continue
+		}
+		seen[f] = struct{}{}
+		out = append(out, f)
+	}
+	return out
+}
+
+// applyLexicalReRanking adds a small bonus (up to 0.08) when query terms appear
+// in the candidate's symbol name or file path. This breaks ties between
+// structurally similar files that have equal BM25 scores.
+func applyLexicalReRanking(c *candidate, confidence float64, terms []string) float64 {
+	if len(terms) == 0 || c == nil {
+		return confidence
+	}
+	target := strings.ToLower(c.name + " " + c.filePath)
+	matches := 0
+	for _, term := range terms {
+		if strings.Contains(target, term) {
+			matches++
+		}
+	}
+	if matches == 0 {
+		return confidence
+	}
+	bonus := 0.08 * float64(matches) / float64(len(terms))
+	return clampFloat64(confidence+bonus, 0.0, 1.0)
 }
 
 // getMatchingChunks retrieves code chunks for a given file and symbol name.

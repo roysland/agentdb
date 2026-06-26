@@ -43,7 +43,6 @@ func IsLegacyHash(hash string) bool {
 }
 
 // HashFile computes the SHA-256 hash of a file's content and returns it as a hex string.
-// For files larger than 10MB, content is streamed through the hash function.
 func HashFile(path string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {

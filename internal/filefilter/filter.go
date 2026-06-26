@@ -3,6 +3,7 @@ package filefilter
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -61,6 +62,42 @@ var codeExtensions = map[string]struct{}{
 func ShouldSkipDirName(name string) bool {
 	_, ok := ignoredDirNames[strings.ToLower(name)]
 	return ok
+}
+
+var testSuffixes = []string{"_test.go", ".test.ts", ".test.js", ".spec.ts", ".spec.js"}
+
+var nonImplExtensions = map[string]struct{}{
+	".md": {}, ".markdown": {}, ".yaml": {}, ".yml": {},
+	".json": {}, ".css": {}, ".html": {}, ".xml": {}, ".txt": {},
+}
+
+var nonImplDirs = []string{"okf", "docs", "doc", ".kiro", "kiro", "spec", "specs"}
+
+// IsTestFile reports whether the file path is a test file that should be excluded
+// from implementation-targeted search results.
+func IsTestFile(path string) bool {
+	normalized := filepath.ToSlash(path)
+	base := filepath.Base(normalized)
+
+	if slices.ContainsFunc(testSuffixes, func(s string) bool { return strings.HasSuffix(base, s) }) {
+		return true
+	}
+	return slices.Contains(strings.Split(normalized, "/"), "__tests__")
+}
+
+// IsImplFile reports whether the file path is an implementation file, as opposed
+// to docs, config, assets, or spec directories that agents would not edit to fix a bug.
+func IsImplFile(path string) bool {
+	normalized := filepath.ToSlash(strings.ToLower(path))
+
+	if _, ok := nonImplExtensions[filepath.Ext(normalized)]; ok {
+		return false
+	}
+
+	parts := strings.Split(normalized, "/")
+	return !slices.ContainsFunc(parts, func(p string) bool {
+		return slices.Contains(nonImplDirs, p)
+	})
 }
 
 // ShouldIgnorePath applies canonical ignore rules to a file or directory path.

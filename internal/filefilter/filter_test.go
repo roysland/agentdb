@@ -108,6 +108,48 @@ func TestMatcherHonorsNestedGitignoreForFiles(t *testing.T) {
 	}
 }
 
+func TestIsTestFile(t *testing.T) {
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{"internal/search/locate_issue_test.go", true},
+		{"cmd/root_test.go", true},
+		{"src/components/Button.test.ts", true},
+		{"src/utils/helper.spec.js", true},
+		{"src/__tests__/app.ts", true},
+		{"internal/search/locate_issue.go", false},
+		{"cmd/root.go", false},
+		{"src/components/Button.ts", false},
+	}
+	for _, tt := range tests {
+		if got := IsTestFile(tt.path); got != tt.want {
+			t.Errorf("IsTestFile(%q) = %v, want %v", tt.path, got, tt.want)
+		}
+	}
+}
+
+func TestIsImplFile(t *testing.T) {
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{"internal/search/locate_issue.go", true},
+		{"cmd/root.go", true},
+		{"README.md", false},
+		{"docs/guide.md", false},
+		{"okf/modules/search.md", false},
+		{".kiro/spec.yaml", false},
+		{"config/app.yaml", false},
+		{"src/styles/main.css", false},
+	}
+	for _, tt := range tests {
+		if got := IsImplFile(tt.path); got != tt.want {
+			t.Errorf("IsImplFile(%q) = %v, want %v", tt.path, got, tt.want)
+		}
+	}
+}
+
 func TestMatcherHonorsNestedGitignoreForDirectories(t *testing.T) {
 	root := t.TempDir()
 
