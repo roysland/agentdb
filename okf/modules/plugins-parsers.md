@@ -54,4 +54,4 @@ func emit(resp rpcResponse)
 
 ## Unclear intent
 
-- **`knownExts` in `buildCapabilities`**: The extension list is hardcoded to `{".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".rs"}` rather than derived from each parser's own reported extensions. If a parser later supports additional extensions (e.g., `.pyi` for Python stubs), they would not appear in capabilities unless this list is manually updated. The relationship between this hardcoded list and whatever `parse.Parser` exposes via `CanParse` is not documented.
+- **`knownExts` in `buildCapabilities`** — annotated, not fully resolved. The hardcoded list is what the plugin advertises in its capabilities JSON to the MCP host during protocol negotiation. `CanParse` is the actual runtime gate: a file is still parsed if `CanParse` returns true, regardless of whether its extension is in `knownExts`. The two can diverge: adding a new extension to a parser's `CanParse` without updating `knownExts` means files with that extension will be parsed but not advertised. When adding new language support, update `knownExts` in `buildCapabilities` in addition to `CanParse`.

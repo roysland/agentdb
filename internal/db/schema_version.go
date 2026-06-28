@@ -9,7 +9,7 @@ import (
 )
 
 // CurrentSchemaVersion must be bumped whenever data/schema.sql changes.
-const CurrentSchemaVersion = "3"
+const CurrentSchemaVersion = "4"
 
 // EnsureSchemaVersionCompatible verifies that the opened database was created
 // with a schema version compatible with this executable.

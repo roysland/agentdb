@@ -68,6 +68,9 @@ func GetEmbeddedSchema() (string, error) // in schema_embed.go
 
 ## Unclear intent
 
-- **`resolveDriver` and `isLocalFilePath`**: These are referenced in `openSingleConn` and `Open` but their definitions are not in the provided files. They likely live in `config` or another module — their behavior (what drivers are supported, what constitutes a "local file path") is not determinable from this module alone.
-- **`UpsertSchemaVersion`**: Declared in `schema_version.go` (not shown). The version numbering scheme and what triggers a version bump are not visible here.
-- **`Open` vs `NewConnectionHandle`**: Both open connections, but `Open` returns a raw `*sql.DB` while `NewConnectionHandle` wraps it with serialization and health checking. The intended caller for each is not obvious from the code alone — `Open` appears to be a lower-level escape hatch, but it's unclear when it should be preferred.
+None. All three previously-flagged items are resolved:
+
+- **`resolveDriver`** (in `open.go`) normalizes the driver string to `"sqlite"` for inputs `""`, `"auto"`, `"turso"`, `"sqlite"`, or `"sqlite3"`. Any other string is passed through and will fail at `sql.Open` time. Only sqlite is currently supported.
+- **`isLocalFilePath`** (in `open.go`) returns `false` for `libsql://` and `turso://` URLs; `true` for everything else. When `true`, `Open` creates the parent directory before connecting.
+- **`UpsertSchemaVersion`** (in `schema_version.go`) writes `CurrentSchemaVersion = "4"` into the `meta` table. `EnsureSchemaVersionCompatible` reads it back and returns an error if it doesn't match the compiled-in constant. Bump `CurrentSchemaVersion` in code whenever `data/schema.sql` changes — it's the single source of truth.
+- **`Open` vs `NewConnectionHandle`**: `Open` returns a bare `*sql.DB` for CLI commands (sequential, single-goroutine). `NewConnectionHandle` wraps the same connection with a read/write lock for the MCP server where concurrent tool calls share one SQLite connection. Rule: CLI uses `Open`; MCP server uses `NewConnectionHandle`.

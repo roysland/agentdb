@@ -73,4 +73,4 @@ The `cmd` package defines all CLI subcommands for the `agentdb` binary using Cob
 
 ## Unclear intent
 
-- The `newMCPTestCmd`, `newMCPChunkerDefaultCmd`, and `newMCPAnalyzerDefaultCmd` commands are listed in the file manifest but their source code is not included in this snapshot, so their exact purpose and behavior cannot be determined from the provided context.
+None. The files `mcp_chunker_default.go` and `mcp_analyzer_default.go` carry `//go:build !treesitter` — they provide the non-tree-sitter implementations of `mcpChunkFile`/`mcpChunkDirectory` and `mcpAnalyzeParseFile` respectively. When the treesitter build tag is active, alternative implementations replace them. These are not Cobra commands; they are build-tag-selected helper functions called from `mcp.go`.

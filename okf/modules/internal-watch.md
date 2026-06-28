@@ -52,4 +52,4 @@ func (w *Watcher) Run(ctx context.Context) error
 
 ## Unclear intent
 
-- **`findParserForFile` is defined in `watcher.go` but not part of the `parse` package**: This function duplicates what could reasonably live in the `parse` package (e.g., as a dispatcher). Its placement in the watch module suggests it may be a temporary bridge, but the intent is not clear from the code alone.
+- **`findParserForFile` defined in both `watcher.go` and `cmd/analyze.go`** — intentional duplication. The watch package cannot import cmd (circular), and the parse package does not expose a dispatcher by design (callers iterate parsers themselves). The function is 6 lines; sharing it would require a new package or moving it into parse, both of which add more complexity than the duplication warrants.

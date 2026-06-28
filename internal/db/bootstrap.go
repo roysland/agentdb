@@ -132,6 +132,11 @@ func MigrateSchema(ctx context.Context, db *sql.DB) error {
 		return fmt.Errorf("migrate chunks key uniqueness: %w", err)
 	}
 
+	// Migration 12: Create persistent metrics tables.
+	if err := migrateCreateMetricTables(ctx, db); err != nil {
+		return fmt.Errorf("migrate metric tables: %w", err)
+	}
+
 	return nil
 }
 
@@ -496,6 +501,56 @@ func migrateCreateChunksFTS(ctx context.Context, db *sql.DB) error {
 		}
 	}
 
+	return nil
+}
+
+// migrateCreateMetricTables creates the three persistent metrics tables used to
+// track tool-call latency, indexing throughput, and parse/graph health across
+// MCP server restarts.
+func migrateCreateMetricTables(ctx context.Context, db *sql.DB) error {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS metric_tool_calls (
+			id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			recorded_at INTEGER NOT NULL,
+			tool        TEXT    NOT NULL,
+			duration_ms INTEGER NOT NULL,
+			is_error    INTEGER NOT NULL DEFAULT 0
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_metric_tool_calls_tool ON metric_tool_calls(tool)`,
+		`CREATE INDEX IF NOT EXISTS idx_metric_tool_calls_recorded_at ON metric_tool_calls(recorded_at DESC)`,
+		`CREATE TABLE IF NOT EXISTS metric_index_runs (
+			id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+			recorded_at        INTEGER NOT NULL,
+			codebase_id        INTEGER REFERENCES codebases(id) ON DELETE SET NULL,
+			files_indexed      INTEGER NOT NULL DEFAULT 0,
+			chunks_indexed     INTEGER NOT NULL DEFAULT 0,
+			embedding_failures INTEGER NOT NULL DEFAULT 0,
+			duration_ms        INTEGER NOT NULL DEFAULT 0
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_metric_index_runs_codebase ON metric_index_runs(codebase_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_metric_index_runs_recorded_at ON metric_index_runs(recorded_at DESC)`,
+		`CREATE TABLE IF NOT EXISTS metric_analyze_runs (
+			id             INTEGER PRIMARY KEY AUTOINCREMENT,
+			recorded_at    INTEGER NOT NULL,
+			codebase_id    INTEGER REFERENCES codebases(id) ON DELETE SET NULL,
+			total_files    INTEGER NOT NULL DEFAULT 0,
+			complete       INTEGER NOT NULL DEFAULT 0,
+			text_fallbacks INTEGER NOT NULL DEFAULT 0,
+			partial        INTEGER NOT NULL DEFAULT 0,
+			panics         INTEGER NOT NULL DEFAULT 0,
+			zero_symbols   INTEGER NOT NULL DEFAULT 0,
+			total_symbols  INTEGER NOT NULL DEFAULT 0,
+			total_edges    INTEGER NOT NULL DEFAULT 0,
+			duration_ms    INTEGER NOT NULL DEFAULT 0
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_metric_analyze_runs_codebase ON metric_analyze_runs(codebase_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_metric_analyze_runs_recorded_at ON metric_analyze_runs(recorded_at DESC)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

@@ -55,6 +55,8 @@ Provides generated data-access layer types and query methods for the agentdb sys
 
 ## Unclear intent
 
-- **`Meta` struct** — defined in `models.go` with `Key`/`Value` fields but no corresponding query or table reference in `queries.sql.go`. Its purpose and which table it maps to cannot be determined from this module alone.
-- **`CodebaseMetum`** — the unusual Latinized plural (`Metum` instead of `Meta`) suggests intentional naming, but without schema or usage context it's unclear whether this is a distinct concept from `Meta` or a naming accident.
-- **`ChunksFt`** — as noted above, the exact table type (FTS shadow table, materialized view, etc.) cannot be confirmed without the SQL schema.
+None. The three previously-flagged types are resolved:
+
+- **`Meta`** maps to the `meta` table — a global key-value store with a single seeded row: `('schema_version', '4')`. Queries against it are hand-written in bootstrap/schema code, which is why no generated `*Params` structs appear for it.
+- **`CodebaseMetum`** is sqlc's auto-generated singular form of `codebase_meta` (sqlc uses Latin-style singularization: "meta" → "metum"). It represents one key-value row scoped to a `codebase_id`, distinct from the global `Meta`.
+- **`ChunksFt`** is the sqlc struct for the `chunks_fts` FTS5 virtual table. The virtual table exposes exactly three columns (`snippet`, `name`, `file_path`), which is why `ChunksFt` has only those three fields. It is not a shadow table; it is the primary FTS5 virtual table kept in sync by INSERT/DELETE/UPDATE triggers on `chunks`.

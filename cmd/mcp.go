@@ -512,6 +512,9 @@ func handleMCPToolCallWithObservability(ctx context.Context, rawParams json.RawM
 	if mcpMetrics != nil {
 		mcpMetrics.Record(toolName, durationMs, isError)
 	}
+	if mcpConnHandle != nil {
+		store.RecordToolCall(mcpConnHandle.DB(), toolName, durationMs, isError)
+	}
 
 	// Emit structured log entry.
 	if mcpLogger != nil {
@@ -1159,6 +1162,7 @@ func mcpIndexCodebase(ctx context.Context, conn *sql.DB, args map[string]any) (m
 			if mcpMetrics != nil {
 				mcpMetrics.RecordIndexRun(int64(totalFiles), int64(totalChunks), indexEmbedFailures, time.Since(indexStartTime).Milliseconds())
 			}
+			store.RecordIndexRun(conn, codebaseID, int64(totalFiles), int64(totalChunks), indexEmbedFailures, time.Since(indexStartTime).Milliseconds())
 			return mcpToolTextResult(result), nil
 		}
 	}
@@ -1224,6 +1228,7 @@ func mcpIndexCodebase(ctx context.Context, conn *sql.DB, args map[string]any) (m
 	if mcpMetrics != nil {
 		mcpMetrics.RecordIndexRun(int64(len(fileResults)), int64(totalChunks), indexEmbedFailures, time.Since(indexStartTime).Milliseconds())
 	}
+	store.RecordIndexRun(conn, codebaseID, int64(len(fileResults)), int64(totalChunks), indexEmbedFailures, time.Since(indexStartTime).Milliseconds())
 
 	return mcpToolTextResult(result), nil
 }
@@ -1374,6 +1379,9 @@ func mcpAnalyzeCodebase(ctx context.Context, conn *sql.DB, args map[string]any) 
 		return nil, errors.New("codebase_id and codebase_path are required")
 	}
 
+	analyzeStartTime := time.Now()
+	var runComplete, runTextFallbacks, runPartial, runPanics, runZeroSymbols int64
+
 	symbolRepo := store.NewSymbolRepo(conn)
 	edgeRepo := store.NewEdgeRepo(conn)
 	sfRepo := store.NewSourceFileRepo(conn)
@@ -1466,6 +1474,20 @@ func mcpAnalyzeCodebase(ctx context.Context, conn *sql.DB, args map[string]any) 
 				if mcpMetrics != nil {
 					mcpMetrics.RecordParseResult(analyzeResult.IndexStatus, analyzeResult.StatusReason, len(analyzeResult.FileResult.Symbols))
 				}
+				switch analyzeResult.IndexStatus {
+				case "complete":
+					runComplete++
+					if len(analyzeResult.FileResult.Symbols) == 0 {
+						runZeroSymbols++
+					}
+				case "text_fallback":
+					runTextFallbacks++
+				default:
+					runPartial++
+					if strings.HasPrefix(analyzeResult.StatusReason, "tree-sitter panic") {
+						runPanics++
+					}
+				}
 
 				result := analyzeResult.FileResult
 
@@ -1543,6 +1565,8 @@ func mcpAnalyzeCodebase(ctx context.Context, conn *sql.DB, args map[string]any) 
 			if mcpMetrics != nil {
 				mcpMetrics.RecordGraphUpdate(int64(totalSymbols), int64(totalEdges))
 			}
+			parsedFiles := runComplete + runTextFallbacks + runPartial
+			store.RecordAnalyzeRun(conn, codebaseID, parsedFiles, runComplete, runTextFallbacks, runPartial, runPanics, runZeroSymbols, int64(totalSymbols), int64(totalEdges), time.Since(analyzeStartTime).Milliseconds())
 			return mcpToolTextResult(result), nil
 		}
 	}
@@ -1599,6 +1623,20 @@ func mcpAnalyzeCodebase(ctx context.Context, conn *sql.DB, args map[string]any) 
 	for _, ar := range analyzeResults {
 		if mcpMetrics != nil {
 			mcpMetrics.RecordParseResult(ar.IndexStatus, ar.StatusReason, len(ar.FileResult.Symbols))
+		}
+		switch ar.IndexStatus {
+		case "complete":
+			runComplete++
+			if len(ar.FileResult.Symbols) == 0 {
+				runZeroSymbols++
+			}
+		case "text_fallback":
+			runTextFallbacks++
+		default:
+			runPartial++
+			if strings.HasPrefix(ar.StatusReason, "tree-sitter panic") {
+				runPanics++
+			}
 		}
 		result := ar.FileResult
 		if err := sfRepo.Upsert(ctx, codebaseID, store.SourceFileData{
@@ -1662,6 +1700,8 @@ func mcpAnalyzeCodebase(ctx context.Context, conn *sql.DB, args map[string]any) 
 	if mcpMetrics != nil {
 		mcpMetrics.RecordGraphUpdate(int64(totalSymbols), int64(totalEdges))
 	}
+	parsedFiles := runComplete + runTextFallbacks + runPartial
+	store.RecordAnalyzeRun(conn, codebaseID, parsedFiles, runComplete, runTextFallbacks, runPartial, runPanics, runZeroSymbols, int64(totalSymbols), int64(totalEdges), time.Since(analyzeStartTime).Milliseconds())
 
 	return mcpToolTextResult(result), nil
 }

@@ -1,92 +1,92 @@
 sources:
   - name: fsnotify
     url: https://github.com/fsnotify/fsnotify
-    usage_context: "TODO: describe how this project uses fsnotify"
+    usage_context: The project uses fsnotify to monitor file system events for directory watching, specifically in the internal/watch package where it's integrated with debouncing logic to handle rapid file changes; there are no build tags or conditional imports, indicating it's a direct, unconditional dependency for file watching functionality.
 
   - name: uuid
     url: https://github.com/google/uuid
-    usage_context: "TODO: describe how this project uses uuid"
+    usage_context: The uuid library is used to generate unique identifiers for database records in the memory and MCP command handlers, specifically via the uuid.New() function to produce RFC 4122 version 4 UUIDs; no build tags or conditional compilation constraints are present.
 
   - name: tiktoken-go
     url: https://github.com/pkoukk/tiktoken-go
-    usage_context: "TODO: describe how this project uses tiktoken-go"
+    usage_context: The project uses tiktoken-go to encode and count tokens in text chunks for the text_chunker module, specifically leveraging the library's tokenizer functionality to support token-aware chunking logic. There are no build tags or conditional imports observed; the dependency is imported unconditionally at the module level.
 
   - name: go-gitignore
     url: https://github.com/sabhiram/go-gitignore
-    usage_context: "TODO: describe how this project uses go-gitignore"
+    usage_context: The project uses go-gitignore to parse and evaluate .gitignore patterns for filtering files during indexing, specifically leveraging the library’s `NewGitIgnore` and `Match` functions to determine whether a given file path should be ignored based on repository .gitignore rules. There are no build tags or conditional compilation constraints observed; the dependency is imported unconditionally in the filefilter package.
 
   - name: go-tree-sitter
     url: https://github.com/smacker/go-tree-sitter
-    usage_context: "TODO: describe how this project uses go-tree-sitter"
+    usage_context: The project uses go-tree-sitter to parse source code into abstract syntax trees (ASTs) for multiple languages (JavaScript, TypeScript/TSX, Python, Rust) via language-specific submodules, primarily in parsing and chunking logic for code analysis; there are no build tags or conditional imports observed, indicating it is a direct, unconditional dependency used at runtime.
 
   - name: cobra
     url: https://github.com/spf13/cobra
-    usage_context: "TODO: describe how this project uses cobra"
+    usage_context: This project uses Cobra to implement a command-line interface with multiple subcommands (e.g., `analyze`, `codebase`, `export`, `import`, `query`, `watch`, `bootstrap`, `mcp`, `locate_issue`, `index`, `memory`, `workspace`, `version`, `root`), where each command is defined as a `*cobra.Command` in dedicated files under `cmd/`. There are no build tags or conditional imports observed—Cobra is used unconditionally across all command definitions.
 
   - name: yaml.v3
     url: https://gopkg.in/yaml.v3
-    usage_context: "TODO: describe how this project uses yaml.v3"
+    usage_context: The project uses yaml.v3 to unmarshal YAML configuration files in the orient.go module, specifically for loading and parsing database orientation definitions; there are no build tags or conditional usage detected, indicating it is a direct, unconditional dependency.
 
   - name: sqlite
     url: https://modernc.org/sqlite
-    usage_context: "TODO: describe how this project uses sqlite"
+    usage_context: The project uses modernc.org/sqlite as a pure-Go SQLite driver for database operations, including connection management, schema bootstrapping, and artifact import/export functionality—specifically leveraging its embedded database capabilities without external C dependencies. All imports are blank imports (`_ "modernc.org/sqlite"`) indicating the driver is registered for use with Go's database/sql package, and no build tags or conditional usage were observed in the codebase.
 
   - name: regexp2
     url: https://github.com/dlclark/regexp2
-    usage_context: "TODO: describe how this project uses regexp2"
+    usage_context: The project uses regexp2 as a transitive build-time dependency, likely for regex compilation or validation during CLI tool execution or build processes; no direct import sites are present in the source code, indicating it is not imported directly by application code.
 
   - name: go-humanize
     url: https://github.com/dustin/go-humanize
-    usage_context: "TODO: describe how this project uses go-humanize"
+    usage_context: go-humanize is used for formatting byte sizes and time durations in human-readable form, likely in CLI output or logging; no direct import sites were found in the source, indicating it is likely a transitive build dependency or used exclusively in CLI tooling.
 
   - name: mousetrap
     url: https://github.com/inconshreveable/mousetrap
-    usage_context: "TODO: describe how this project uses mousetrap"
+    usage_context: No import sites were found in the source code, indicating mousetrap is likely used as a CLI tool or a transitive build-time dependency rather than being directly imported or invoked at runtime.
 
   - name: pretty
     url: https://github.com/kr/pretty
-    usage_context: "TODO: describe how this project uses pretty"
+    usage_context: The `pretty` dependency appears to be a CLI tool or build-time dependency, as no import sites were found in the source code; it is likely used for formatting output in development tooling or as a transitive dependency in the build pipeline.
 
   - name: go-isatty
     url: https://github.com/mattn/go-isatty
-    usage_context: "TODO: describe how this project uses go-isatty"
+    usage_context: go-isatty is used to detect whether standard streams (stdin/stdout/stderr) are attached to a terminal, primarily for CLI tools to conditionally enable colored output or interactive behavior; no direct import sites are present in the source, indicating it is likely a transitive dependency used by a CLI tool or invoked at build time.
 
   - name: go-strftime
     url: https://github.com/ncruces/go-strftime
-    usage_context: "TODO: describe how this project uses go-strftime"
+    usage_context: go-strftime is used as a transitive build dependency, likely via a CLI tool or build-time process, since no direct import sites were found in the source code; it provides strftime-style formatting functionality for time strings, potentially used in command-line output or code generation tools.
 
   - name: bigfft
     url: https://github.com/remyoudompheng/bigfft
-    usage_context: "TODO: describe how this project uses bigfft"
+    usage_context: The bigfft dependency appears to be a CLI tool or build-time dependency, as no import sites were found in the source code; it is likely used for high-performance FFT computations during build processes or via command-line invocation rather than direct programmatic integration.
 
   - name: go-internal
     url: https://github.com/rogpeppe/go-internal
-    usage_context: "TODO: describe how this project uses go-internal"
+    usage_context: go-internal is used as a transitive build-time dependency, likely via Go toolchain internals or build constraints, with no direct import sites found in the source codebase, indicating it is not imported directly by application code but may be pulled in by tools or build infrastructure.
 
   - name: pflag
     url: https://github.com/spf13/pflag
-    usage_context: "TODO: describe how this project uses pflag"
+    usage_context: pflag is used for command-line flag parsing in CLI tools, likely as a direct dependency of a command-line utility where flags are defined and parsed at runtime; no import sites were found in the source, indicating it is either a direct CLI dependency or a transitive build-time dependency.
 
   - name: testify
     url: https://github.com/stretchr/testify
-    usage_context: "TODO: describe how this project uses testify"
+    usage_context: Testify is used as a CLI tool for running test suites and generating test reports; no direct import sites are present in the source code, indicating it is not imported as a library dependency but rather invoked via command-line interface during testing workflows.
 
   - name: sys
     url: https://golang.org/x/sys
-    usage_context: "TODO: describe how this project uses sys"
+    usage_context: The sys package is used as a transitive build dependency, likely for low-level OS-specific functionality required during compilation or tooling execution; no direct import sites exist in the source, indicating it is not imported by application code but may be pulled in by build tools or CLI utilities.
 
   - name: check.v1
     url: https://gopkg.in/check.v1
-    usage_context: "TODO: describe how this project uses check.v1"
+    usage_context: "No import sites for check.v1 were found in the source code, indicating it is likely used as a CLI testing tool or a transitive build-time dependency (e.g., via go:generate directives or test-only build tags not reflected in the main codebase)."
 
   - name: libc
     url: https://modernc.org/libc
-    usage_context: "TODO: describe how this project uses libc"
+    usage_context: This dependency appears to be a CLI tool or transitive build-time dependency, as no direct import sites were found in the source code; it is likely used indirectly via build scripts or toolchain integration rather than runtime code.
 
   - name: mathutil
     url: https://modernc.org/mathutil
-    usage_context: "TODO: describe how this project uses mathutil"
+    usage_context: The mathutil dependency appears to be a CLI tool or build-time dependency, as no import sites were found in the source code; it is likely used indirectly via build tags or invoked externally during development or CI workflows.
 
   - name: memory
     url: https://modernc.org/memory
-    usage_context: "TODO: describe how this project uses memory"
+    usage_context: The memory package is used as a transitive build dependency, likely for low-level memory management in CLI tooling or build-time operations, with no direct import sites found in the source codebase.

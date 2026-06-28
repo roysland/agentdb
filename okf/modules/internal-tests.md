@@ -30,4 +30,4 @@ An integration test that verifies the end-to-end memory persistence flow: it ope
 
 ## Unclear intent
 
-- `SuppressBootstrapWarning: true` — the purpose of this flag and what warning it suppresses is not determinable from this file alone; it is defined in `internal/config`.
+- `SuppressBootstrapWarning: true` — resolved. `db.Open` auto-applies `data/schema.sql` when it detects the target database is missing the core tables, and emits a one-time warning to stderr when it does. In tests, databases are always freshly created so this warning fires on every test run and is noise. Setting this flag in the test `Runtime` suppresses the warning without changing any functional behavior.

@@ -1,51 +1,49 @@
 ---
-commit: ca9fc700d18146947f08e753cfc9c793963f987b
+commit: 99a4eb8721ee6257678f63653cf97d856a65aa60
 description: 'Codebase knowledge for module: internal/filefilter'
 files:
 - internal/filefilter/filter.go
 - internal/filefilter/filter_test.go
 tags:
 - module
-timestamp: '2026-06-26'
+timestamp: '2026-06-28'
 title: internal/filefilter
 type: Module
 ---
 
-## What it does
+# `internal/filefilter`
 
-The `filefilter` module provides utilities for deciding which files and directories should be included or excluded during source tree traversal. It combines a hardcoded set of ignored directory names, file name patterns, and extensions with optional `.gitignore` support through a `Matcher` type that scopes gitignore rules to a given root path.
+## What it does  
+The `filefilter` module provides utilities to determine whether files and directories should be included or excluded during code traversal and indexing. It enforces built-in ignore rules (e.g., `.git`, `node_modules`), supports `.gitignore`-style patterns scoped to directories, and distinguishes between implementation, test, and non-implementation files (e.g., docs, configs).
 
-## Public interface
-
+## Public interface  
 ```go
-func ShouldSkipDirName(name string) bool
-func ShouldIgnorePath(path string) bool
-func IsCodeFile(path string) bool
-func IsConfinedRegularFile(rootPath, path string, info os.FileInfo) bool
+func ShouldSkipDirName(name string) bool  
+func IsTestFile(path string) bool  
+func IsImplFile(path string) bool  
+func ShouldIgnorePath(path string) bool  
+func IsCodeFile(path string) bool  
+func IsConfinedRegularFile(rootPath, path string, info os.FileInfo) bool  
 
-type Matcher struct {
-    func NewMatcher(rootPath string) *Matcher
-    func (m *Matcher) ShouldSkipDir(path, dirName string) bool
-    func (m *Matcher) IsCodeFile(path string) bool
-}
+type Matcher struct {  
+    // ...  
+}  
+func NewMatcher(rootPath string) *Matcher  
+func (m *Matcher) ShouldSkipDir(path, dirName string) bool  
+func (m *Matcher) IsCodeFile(path string) bool  
 ```
 
-## Key invariants
+## Key invariants  
+- `IsCodeFile(path)` returns `false` if `ShouldIgnorePath(path)` is `true`.  
+- `Matcher.IsCodeFile(path)` returns `false` if either `IsCodeFile(path)` is `false` *or* the path matches any applicable `.gitignore` rule.  
+- `IsConfinedRegularFile` ensures the resolved path (after symlink resolution, if applicable) is strictly within `rootPath` and is a regular file.  
+- `ShouldSkipDirName` is case-insensitive (normalizes via `strings.ToLower`).  
+- `IsImplFile` excludes files with known non-implementation extensions (e.g., `.md`, `.yaml`) and files in known non-implementation directories (e.g., `docs`, `spec`).  
 
-- `ShouldSkipDirName` uses case-insensitive comparison against a fixed set of directory names (`.git`, `node_modules`, `.venv`, `venv`, `__pycache__`, `vendor`, `dist`, `build`, `.idea`, `.vscode`).
-- `ShouldIgnorePath` checks every path segment against `ShouldSkipDirName`, so a file inside any ignored directory is itself ignored.
-- `IsCodeFile` returns `false` if `ShouldIgnorePath` returns `true`; extension matching is case-insensitive.
-- `IsConfinedRegularFile` rejects any path whose resolved target falls outside `rootPath`. Symlinks are only accepted when they resolve to a regular file strictly inside the root.
-- `Matcher` scopes each `.gitignore` file to its own directory subtree. A `.gitignore` at `web/.gitignore` only affects paths under `web/`.
-- `loadGitignoreMap` walks the root using `filepath.WalkDir` and skips the same hardcoded ignored directories, so `.gitignore` files inside `node_modules` or `.git` are never loaded.
-- `ancestorScopes` returns the empty scope `""` (root gitignore) plus each ancestor directory up to (and including, for directories) the target, so a `MatchesPath` check is performed at every relevant scope.
+## Non-obvious decisions  
+- **Ancestor-scoped `.gitignore` lookup (`ancestorScopes`)**: When checking if a file/directory is ignored, the module evaluates `.gitignore` files from the root down to the current path’s parent directories, not just the nearest one. This matches Git’s behavior where nested `.gitignore` files inherit and extend parent rules, but the implementation explicitly aggregates *all* ancestor scopes (including root) and applies them in order. A developer might expect only the nearest `.gitignore` to apply, but Git semantics require cumulative scoping.  
+- **`relPath` returns `false` for paths outside `rootPath`**: The helper `relPath` rejects paths that resolve to `..` or absolute paths after `filepath.Rel`, ensuring `Matcher` operations are strictly bounded to the root. This prevents accidental traversal or matching of files outside the intended scope (e.g., via symlinks pointing out of bounds).  
+- **`IsImplFile` excludes `.yaml`, `.yml`, `.json`, etc., unconditionally**: While some config files (e.g., `go.mod`) *are* implementation-critical, the module treats *all* such extensions as non-implementation to avoid agents modifying configs when fixing bugs. This is a conservative design choice—better to exclude edge cases than risk unintended edits.  
 
-## Non-obvious decisions
-
-- **`loadGitignoreMap` collects entries into a slice and sorts before compiling**: The walk visits directories in arbitrary order depending on the OS. Sorting ensures deterministic behavior when multiple `.gitignore` files exist, though the current code does not actually depend on insertion order since each scope maps to exactly one compiled ignore file. The sort appears to be defensive or carry-over from an earlier design.
-- **`isGitIgnored` iterates all ancestor scopes and does not short-circuit on first match**: A file can be ignored by a parent `.gitignore` even if a closer one doesn't mention it, and vice versa. This is correct gitignore semantics, but the loop sets `ignored = true` monotonically — once ignored, a later scope cannot un-ignore it. This matches how git itself behaves (a match at any level wins).
-- **`IsConfinedRegularFile` calls `filepath.EvalSymlinks` but `IsCodeFile` does not**: The `Matcher` methods operate on logical paths and do not resolve symlinks. Only `IsConfinedRegularFile` performs symlink resolution, meaning a symlink to a code file inside the root will pass `IsCodeFile` but its confinement must be separately verified.
-
-## Unclear intent
-
-- **The `go-gitignore` library (`github.com/sabhiram/go-gitignore`)**: This is an external dependency, not one of the listed internal modules. Its `MatchesPath` semantics for directories (whether trailing `/` matters, how negation patterns interact with directory-only rules) are not fully visible from this code alone. The `isGitIgnored` method passes both `target` and `target+"/"` for directory checks, suggesting uncertainty about which form the library requires — this dual-call pattern may be redundant or may be necessary depending on the library's internal behavior.
+## Unclear intent  
+None. All functions, parameters, and naming conventions are clear and consistent with their documented purposes. The use of `filepath.ToSlash` and `strings.ToLower` for cross-platform normalization is idiomatic and unambiguous.

@@ -100,5 +100,5 @@ func HasMergeConflicts(content []byte) bool
 
 ## Unclear intent
 
-- **`tsModuleName`**: Referenced in `resilient.go` but defined in the tree-sitter parser files not shown here. Its exact derivation logic for module/package naming from file paths should be documented in `treesitter_base.go` or the language-specific tree-sitter files.
-- **`extractCallEdges` method receiver for non-method calls**: When a call target is a bare identifier (not a selector expression), it's qualified as `pkgName.name`. The resolution of local vs. package-level calls relies on the import alias map — calls to unresolvable local functions get no edge, which may under-report internal call graphs.
+- **`tsModuleName`** is defined in the treesitter-specific source files behind the `treesitter` build tag. It is not present in the non-treesitter build. Its invocation in `resilient.go` is only reachable when the treesitter tag is active; the non-treesitter build compiles a different code path. No action needed — this is expected conditional compilation.
+- **`extractCallEdges` under-reports local calls** — known limitation, not a bug. When a call target is a bare identifier that cannot be resolved through the import alias map, no edge is emitted. This is intentional: a wrong edge (pointing to the wrong package) would be worse than a missing edge for graph navigation tools.
