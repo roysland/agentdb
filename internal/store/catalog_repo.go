@@ -49,6 +49,14 @@ func (r *CatalogRepo) GetByID(ctx context.Context, id int64) (Codebase, error) {
 	return cb, nil
 }
 
+func (r *CatalogRepo) DeleteCodebase(ctx context.Context, id int64) error {
+	_, err := r.db.ExecContext(ctx, `DELETE FROM codebases WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("delete codebase: %w", err)
+	}
+	return nil
+}
+
 func (r *CatalogRepo) ListCodebases(ctx context.Context) ([]Codebase, error) {
 	rows, err := r.q.ListCodebases(ctx)
 	if err != nil {

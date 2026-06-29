@@ -3,6 +3,8 @@ package cmd
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -61,6 +63,45 @@ func newCodebaseCmd(ctx context.Context) *cobra.Command {
 		},
 	}
 
-	codebase.AddCommand(register, list)
+	prune := &cobra.Command{
+		Use:   "prune",
+		Short: "Remove codebases whose root path no longer exists on disk",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			conn, err := db.Open(ctx, rootCfg)
+			if err != nil {
+				return err
+			}
+			defer conn.Close()
+
+			repo := store.NewCatalogRepo(conn)
+			items, err := repo.ListCodebases(cmd.Context())
+			if err != nil {
+				return err
+			}
+
+			type result struct {
+				ID       int64  `json:"id"`
+				Name     string `json:"name"`
+				RootPath string `json:"root_path"`
+			}
+			var pruned []result
+
+			for _, cb := range items {
+				if _, statErr := os.Stat(cb.RootPath); os.IsNotExist(statErr) {
+					if err := repo.DeleteCodebase(cmd.Context(), cb.ID); err != nil {
+						return fmt.Errorf("delete codebase %d (%s): %w", cb.ID, cb.RootPath, err)
+					}
+					pruned = append(pruned, result{ID: cb.ID, Name: cb.Name, RootPath: cb.RootPath})
+				}
+			}
+
+			return printJSON(map[string]any{
+				"pruned": pruned,
+				"count":  len(pruned),
+			})
+		},
+	}
+
+	codebase.AddCommand(register, list, prune)
 	return codebase
 }
