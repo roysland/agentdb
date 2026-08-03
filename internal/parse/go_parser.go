@@ -73,8 +73,9 @@ func (p *GoParser) Parse(filePath string, content []byte) (FileResult, error) {
 				result.Edges = append(result.Edges, edges...)
 			}
 		case *ast.GenDecl:
-			syms := extractGoGenDecl(fset, d, filePath, f.Name.Name, content, hash)
+			syms, edges := extractGoGenDecl(fset, d, filePath, f.Name.Name, content, hash)
 			result.Symbols = append(result.Symbols, syms...)
+			result.Edges = append(result.Edges, edges...)
 		}
 	}
 
@@ -130,18 +131,63 @@ func extractGoFunc(fset *token.FileSet, d *ast.FuncDecl, filePath, pkgName strin
 	}
 }
 
-func extractGoGenDecl(fset *token.FileSet, d *ast.GenDecl, filePath, pkgName string, content []byte, fileHash string) []Symbol {
+func extractGoGenDecl(fset *token.FileSet, d *ast.GenDecl, filePath, pkgName string, content []byte, fileHash string) ([]Symbol, []Edge) {
 	var out []Symbol
+	var edges []Edge
 
 	for _, spec := range d.Specs {
 		switch s := spec.(type) {
 		case *ast.TypeSpec:
 			kind := "type"
-			switch s.Type.(type) {
+			switch t := s.Type.(type) {
 			case *ast.StructType:
 				kind = "struct"
+				if t.Fields != nil {
+					for _, field := range t.Fields.List {
+						if len(field.Names) == 0 { // embedded field
+							embedType := exprToString(field.Type)
+							if embedType != "" {
+								cleanEmbed := strings.TrimLeft(embedType, "*")
+								toRef := cleanEmbed
+								if !strings.Contains(toRef, ".") {
+									toRef = pkgName + "." + toRef
+								}
+								edges = append(edges, Edge{
+									FromKind: "symbol",
+									FromRef:  pkgName + "." + s.Name.Name,
+									ToKind:   "symbol",
+									ToRef:    toRef,
+									EdgeKind: "embeds",
+									Line:     int64(fset.Position(field.Pos()).Line),
+								})
+							}
+						}
+					}
+				}
 			case *ast.InterfaceType:
 				kind = "interface"
+				if t.Methods != nil {
+					for _, method := range t.Methods.List {
+						if len(method.Names) == 0 { // embedded interface
+							embedType := exprToString(method.Type)
+							if embedType != "" {
+								cleanEmbed := strings.TrimLeft(embedType, "*")
+								toRef := cleanEmbed
+								if !strings.Contains(toRef, ".") {
+									toRef = pkgName + "." + toRef
+								}
+								edges = append(edges, Edge{
+									FromKind: "symbol",
+									FromRef:  pkgName + "." + s.Name.Name,
+									ToKind:   "symbol",
+									ToRef:    toRef,
+									EdgeKind: "embeds",
+									Line:     int64(fset.Position(method.Pos()).Line),
+								})
+							}
+						}
+					}
+				}
 			}
 			name := s.Name.Name
 			startPos := fset.Position(d.Pos())
@@ -207,7 +253,7 @@ func extractGoGenDecl(fset *token.FileSet, d *ast.GenDecl, filePath, pkgName str
 			}
 		}
 	}
-	return out
+	return out, edges
 }
 
 func extractCallEdges(fset *token.FileSet, body *ast.BlockStmt, fromRef, pkgName string, importAliases map[string]string) []Edge {

@@ -129,6 +129,22 @@ func (r *EdgeRepo) GetDependents(ctx context.Context, codebaseID int64, targetRe
 	return scanEdges(rows)
 }
 
+// GetEmbeds returns all types/interfaces that embed the given target.
+func (r *EdgeRepo) GetEmbeds(ctx context.Context, codebaseID int64, targetRef string) ([]Edge, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, codebase_id, from_kind, from_ref, to_kind, to_ref, edge_kind, line, resolved
+		FROM edges
+		WHERE codebase_id = ? AND edge_kind = 'embeds' AND (to_ref = ? OR to_ref LIKE ?)
+		ORDER BY from_ref, line`,
+		codebaseID, targetRef, "%."+targetRef,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get embeds: %w", err)
+	}
+	defer rows.Close()
+	return scanEdges(rows)
+}
+
 // FindUsages returns all edges referencing targetRef (partial suffix match supported).
 func (r *EdgeRepo) FindUsages(ctx context.Context, codebaseID int64, targetRef string) ([]Edge, error) {
 	rows, err := r.db.QueryContext(ctx, `

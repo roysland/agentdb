@@ -421,6 +421,31 @@ func mcpTools() []map[string]any {
 				},
 			},
 		},
+		{
+			"name":        "get_embeds",
+			"description": "Returns all struct or interface types that embed a given type or interface as structured data. Requires: codebase_id, name.",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"codebase_id": map[string]any{"type": "integer"},
+					"name":        map[string]any{"type": "string", "description": "Type or interface name being embedded"},
+				},
+				"required": []string{"codebase_id", "name"},
+			},
+		},
+		{
+			"name":        "get_package_outline",
+			"description": "Returns a structured outline of a package or directory — files, LOC, and symbol inventories — in one call without reading files. Requires: codebase_id. Optional: package_name, path_prefix.",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"codebase_id":  map[string]any{"type": "integer"},
+					"package_name": map[string]any{"type": "string", "description": "Optional: target package name (e.g. store)"},
+					"path_prefix":  map[string]any{"type": "string", "description": "Optional: target directory path prefix (e.g. internal/store/)"},
+				},
+				"required": []string{"codebase_id"},
+			},
+		},
 	}
 
 	tools = append(tools, map[string]any{
@@ -808,6 +833,14 @@ func handleMCPToolCall(ctx context.Context, rawParams json.RawMessage) (map[stri
 		rctx, cancel := mcpConnHandle.ReadContext(ctx)
 		defer cancel()
 		return mcpServerStats(rctx, conn, req.Arguments)
+	case "get_embeds":
+		rctx, cancel := mcpConnHandle.ReadContext(ctx)
+		defer cancel()
+		return mcpGetEmbeds(rctx, conn, req.Arguments)
+	case "get_package_outline":
+		rctx, cancel := mcpConnHandle.ReadContext(ctx)
+		defer cancel()
+		return mcpGetPackageOutline(rctx, conn, req.Arguments)
 
 	// Write operations use WriteContext
 	case "register_codebase":
@@ -2136,6 +2169,124 @@ func mcpGetImports(ctx context.Context, conn *sql.DB, args map[string]any) (map[
 	}
 
 	return mcpToolTextResult(map[string]any{"file_path": filePath, "imports": imports, "count": len(imports)}), nil
+}
+
+func mcpGetEmbeds(ctx context.Context, conn *sql.DB, args map[string]any) (map[string]any, error) {
+	codebaseID := toInt64(args["codebase_id"], 0)
+	if codebaseID <= 0 {
+		return nil, errors.New("codebase_id is required")
+	}
+
+	name := strings.TrimSpace(toString(args["name"]))
+	if name == "" {
+		return nil, errors.New("name is required")
+	}
+
+	edgeRepo := store.NewEdgeRepo(conn)
+	edges, err := edgeRepo.GetEmbeds(ctx, codebaseID, name)
+	if err != nil {
+		return nil, err
+	}
+
+	results := make([]map[string]any, 0, len(edges))
+	for _, e := range edges {
+		results = append(results, map[string]any{
+			"from_kind": e.FromKind,
+			"from_ref":  e.FromRef,
+			"to_kind":   e.ToKind,
+			"to_ref":    e.ToRef,
+			"line":      e.Line,
+		})
+	}
+
+	return mcpToolTextResult(map[string]any{
+		"embeds":      results,
+		"count":       len(results),
+		"codebase_id": codebaseID,
+	}), nil
+}
+
+func mcpGetPackageOutline(ctx context.Context, conn *sql.DB, args map[string]any) (map[string]any, error) {
+	codebaseID := toInt64(args["codebase_id"], 0)
+	if codebaseID <= 0 {
+		return nil, errors.New("codebase_id is required")
+	}
+
+	packageName := strings.TrimSpace(toString(args["package_name"]))
+	pathPrefix := strings.TrimSpace(toString(args["path_prefix"]))
+
+	query := `SELECT file_path, package_name, loc FROM source_files WHERE codebase_id = ?`
+	queryArgs := []any{codebaseID}
+
+	if packageName != "" {
+		query += ` AND package_name = ?`
+		queryArgs = append(queryArgs, packageName)
+	}
+	if pathPrefix != "" {
+		query += ` AND file_path LIKE ?`
+		queryArgs = append(queryArgs, pathPrefix+"%")
+	}
+	query += ` ORDER BY file_path`
+
+	rows, err := conn.QueryContext(ctx, query, queryArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("query package outline files: %w", err)
+	}
+
+	type fileOutline struct {
+		FilePath    string           `json:"file_path"`
+		PackageName string           `json:"package_name"`
+		LOC         int64            `json:"loc"`
+		Symbols     []map[string]any `json:"symbols"`
+	}
+
+	var files []fileOutline
+	var totalLOC int64
+
+	for rows.Next() {
+		var fo fileOutline
+		if err := rows.Scan(&fo.FilePath, &fo.PackageName, &fo.LOC); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		totalLOC += fo.LOC
+		fo.Symbols = make([]map[string]any, 0)
+		files = append(files, fo)
+	}
+	rows.Close()
+
+	symbolRepo := store.NewSymbolRepo(conn)
+	for i, f := range files {
+		syms, err := symbolRepo.GetByFile(ctx, codebaseID, f.FilePath)
+		if err != nil {
+			continue
+		}
+		for _, s := range syms {
+			files[i].Symbols = append(files[i].Symbols, map[string]any{
+				"name":       s.Name,
+				"kind":       s.Kind,
+				"signature":  s.Signature,
+				"visibility": s.Visibility,
+				"start_line": s.StartLine,
+				"end_line":   s.EndLine,
+			})
+		}
+	}
+
+	resp := map[string]any{
+		"codebase_id": codebaseID,
+		"total_files": len(files),
+		"total_loc":   totalLOC,
+		"files":       files,
+	}
+	if packageName != "" {
+		resp["package_name"] = packageName
+	}
+	if pathPrefix != "" {
+		resp["path_prefix"] = pathPrefix
+	}
+
+	return mcpToolTextResult(resp), nil
 }
 
 func mcpProjectOverview(ctx context.Context, conn *sql.DB, args map[string]any) (map[string]any, error) {

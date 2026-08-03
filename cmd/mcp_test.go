@@ -273,3 +273,97 @@ func TestMCPToolTextResultSanitizesNonFiniteFloats(t *testing.T) {
 		t.Fatalf("writeMCPResponse: %v", err)
 	}
 }
+
+func TestMCPGetEmbedsAndPackageOutline(t *testing.T) {
+	ctx := context.Background()
+	database, err := sql.Open("sqlite", t.TempDir()+"/mcp_tools.db")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer database.Close()
+
+	content, err := os.ReadFile("../data/schema.sql")
+	if err != nil {
+		t.Fatalf("read schema: %v", err)
+	}
+	internaldb.SetEmbeddedSchema(string(content))
+
+	if _, err := internaldb.BootstrapSchema(ctx, database, "data/schema.sql"); err != nil {
+		t.Fatalf("bootstrap schema: %v", err)
+	}
+
+	result, err := database.ExecContext(ctx, `INSERT INTO codebases (root_path, name, indexed_at) VALUES (?, ?, ?)`, "/repo", "repo", time.Now().Unix())
+	if err != nil {
+		t.Fatalf("insert codebase: %v", err)
+	}
+	codebaseID, err := result.LastInsertId()
+	if err != nil {
+		t.Fatalf("last insert id: %v", err)
+	}
+
+	// Insert source_files row
+	_, err = database.ExecContext(ctx, `INSERT INTO source_files (codebase_id, file_path, language, package_name, loc, symbol_count, file_hash, indexed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		codebaseID, "internal/store/store.go", "go", "store", 100, 2, "hash1", time.Now().Unix())
+	if err != nil {
+		t.Fatalf("insert source_file: %v", err)
+	}
+
+	// Insert symbol
+	symRepo := store.NewSymbolRepo(database)
+	err = symRepo.Create(ctx, codebaseID, store.SymbolData{
+		FilePath:      "internal/store/store.go",
+		Language:      "go",
+		Kind:          "struct",
+		Name:          "Store",
+		QualifiedName: "store.Store",
+		Signature:     "type Store struct",
+		Visibility:    "exported",
+		StartLine:     10,
+		EndLine:       20,
+		FileHash:      "hash1",
+		IndexedAt:     time.Now().Unix(),
+	})
+	if err != nil {
+		t.Fatalf("create symbol: %v", err)
+	}
+
+	// Insert embed edge
+	edgeRepo := store.NewEdgeRepo(database)
+	err = edgeRepo.Create(ctx, codebaseID, store.EdgeData{
+		FromKind: "symbol",
+		FromRef:  "store.MyStore",
+		ToKind:   "symbol",
+		ToRef:    "store.Store",
+		EdgeKind: "embeds",
+		Line:     15,
+	})
+	if err != nil {
+		t.Fatalf("create edge: %v", err)
+	}
+
+	// Test mcpGetEmbeds
+	embedsResult, err := mcpGetEmbeds(ctx, database, map[string]any{
+		"codebase_id": codebaseID,
+		"name":        "Store",
+	})
+	if err != nil {
+		t.Fatalf("mcpGetEmbeds: %v", err)
+	}
+	scEmbeds, _ := embedsResult["structuredContent"].(map[string]any)
+	if count, ok := scEmbeds["count"].(int); !ok || count != 1 {
+		t.Fatalf("mcpGetEmbeds count = %v, want 1", scEmbeds["count"])
+	}
+
+	// Test mcpGetPackageOutline
+	outlineResult, err := mcpGetPackageOutline(ctx, database, map[string]any{
+		"codebase_id":  codebaseID,
+		"package_name": "store",
+	})
+	if err != nil {
+		t.Fatalf("mcpGetPackageOutline: %v", err)
+	}
+	scOutline, _ := outlineResult["structuredContent"].(map[string]any)
+	if totalFiles, ok := scOutline["total_files"].(int); !ok || totalFiles != 1 {
+		t.Fatalf("mcpGetPackageOutline total_files = %v, want 1", scOutline["total_files"])
+	}
+}
