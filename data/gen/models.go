@@ -67,21 +67,41 @@ type IndexedFile struct {
 	StatusReason string
 }
 
-type Memory struct {
-	ID             string
-	Content        string
-	Category       string
-	WorkspaceID    sql.NullInt64
-	CodebaseID     sql.NullInt64
-	CreatedAt      int64
-	LastRetrieved  sql.NullInt64
-	RetrievalCount sql.NullInt64
-	SourceTask     sql.NullString
-}
-
 type Meta struct {
 	Key   string
 	Value string
+}
+
+type MetricAnalyzeRun struct {
+	ID            int64
+	RecordedAt    int64
+	CodebaseID    sql.NullInt64
+	TotalFiles    int64
+	Complete      int64
+	TextFallbacks int64
+	Partial       int64
+	Panics        int64
+	ZeroSymbols   int64
+	TotalSymbols  int64
+	TotalEdges    int64
+	DurationMs    int64
+}
+
+type MetricIndexRun struct {
+	ID            int64
+	RecordedAt    int64
+	CodebaseID    sql.NullInt64
+	FilesIndexed  int64
+	ChunksIndexed int64
+	DurationMs    int64
+}
+
+type MetricToolCall struct {
+	ID         int64
+	RecordedAt int64
+	Tool       string
+	DurationMs int64
+	IsError    int64
 }
 
 type SourceFile struct {

@@ -21,7 +21,7 @@ func Execute(ctx context.Context) error {
 func newRootCmd(ctx context.Context) *cobra.Command {
 	root := &cobra.Command{
 		Use:   "agentdb",
-		Short: "CLI for agent memory and codebase metadata",
+		Short: "CLI for codebase exploration and search metadata",
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 			resolved := config.Resolve(rootCfg)
 			rootCfg = resolved
@@ -35,7 +35,6 @@ func newRootCmd(ctx context.Context) *cobra.Command {
 	root.PersistentFlags().StringVar(&rootCfg.ProjectPath, "project-path", "", "Default project path context (env: AGENTDB_PROJECT_PATH)")
 
 	root.AddCommand(newBootstrapCmd(ctx))
-	root.AddCommand(newMemoryCmd(ctx))
 	root.AddCommand(newCodebaseCmd(ctx))
 	root.AddCommand(newIndexCmd(ctx))
 	root.AddCommand(newAnalyzeCmd(ctx))

@@ -168,25 +168,7 @@ CREATE TABLE IF NOT EXISTS workspace_members (
 CREATE INDEX IF NOT EXISTS idx_workspace_members_workspace ON workspace_members(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_workspace_members_codebase ON workspace_members(codebase_id);
 
-CREATE TABLE IF NOT EXISTS memories (
-    id              TEXT PRIMARY KEY,
-    content         TEXT NOT NULL,
-    category        TEXT NOT NULL,
-    workspace_id    INTEGER REFERENCES workspaces(id) ON DELETE SET NULL,
-    codebase_id     INTEGER REFERENCES codebases(id) ON DELETE SET NULL,
-    created_at      INTEGER NOT NULL,
-    last_retrieved  INTEGER,
-    retrieval_count INTEGER DEFAULT 0,
-    source_task     TEXT
-);
 
-CREATE INDEX IF NOT EXISTS idx_memories_category ON memories(category);
-CREATE INDEX IF NOT EXISTS idx_memories_created_at ON memories(created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_memories_category_created ON memories(category, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_memories_source_task ON memories(source_task);
-CREATE INDEX IF NOT EXISTS idx_memories_workspace_id ON memories(workspace_id);
-CREATE INDEX IF NOT EXISTS idx_memories_codebase_id ON memories(codebase_id);
-CREATE INDEX IF NOT EXISTS idx_memories_scope_created ON memories(workspace_id, codebase_id, created_at DESC);
 
 -- Persistent metrics: per-call tool log
 CREATE TABLE IF NOT EXISTS metric_tool_calls (

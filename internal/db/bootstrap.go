@@ -112,9 +112,9 @@ func MigrateSchema(ctx context.Context, db *sql.DB) error {
 		}
 	}
 
-	// Migration 8: Add workspace/codebase scope columns to memories.
-	if err := migrateMemoriesScopeColumns(ctx, db); err != nil {
-		return fmt.Errorf("migrate memories scope columns: %w", err)
+	// Migration 8: Drop legacy memories table.
+	if err := migrateDropMemoriesTable(ctx, db); err != nil {
+		return fmt.Errorf("migrate drop memories table: %w", err)
 	}
 
 	// Migration 9: Create codebase_meta table for per-codebase metadata.
@@ -356,8 +356,6 @@ func tableInfoPragma(table string) (string, error) {
 		return "PRAGMA table_info(indexed_files)", nil
 	case "edges":
 		return "PRAGMA table_info(edges)", nil
-	case "memories":
-		return "PRAGMA table_info(memories)", nil
 	case "metric_index_runs":
 		return "PRAGMA table_info(metric_index_runs)", nil
 	default:
@@ -365,47 +363,10 @@ func tableInfoPragma(table string) (string, error) {
 	}
 }
 
-// migrateMemoriesScopeColumns adds workspace/codebase scope columns to memories
-// and creates supporting indexes if missing.
-func migrateMemoriesScopeColumns(ctx context.Context, db *sql.DB) error {
-	exists, err := columnExists(ctx, db, "memories", "workspace_id")
-	if err != nil {
-		return err
-	}
-	if !exists {
-		_, err = db.ExecContext(ctx, `ALTER TABLE memories ADD COLUMN workspace_id INTEGER REFERENCES workspaces(id) ON DELETE SET NULL`)
-		if err != nil {
-			return fmt.Errorf("alter table memories add workspace_id: %w", err)
-		}
-	}
-
-	exists, err = columnExists(ctx, db, "memories", "codebase_id")
-	if err != nil {
-		return err
-	}
-	if !exists {
-		_, err = db.ExecContext(ctx, `ALTER TABLE memories ADD COLUMN codebase_id INTEGER REFERENCES codebases(id) ON DELETE SET NULL`)
-		if err != nil {
-			return fmt.Errorf("alter table memories add codebase_id: %w", err)
-		}
-	}
-
-	_, err = db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_memories_workspace_id ON memories(workspace_id)`)
-	if err != nil {
-		return fmt.Errorf("create index idx_memories_workspace_id: %w", err)
-	}
-
-	_, err = db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_memories_codebase_id ON memories(codebase_id)`)
-	if err != nil {
-		return fmt.Errorf("create index idx_memories_codebase_id: %w", err)
-	}
-
-	_, err = db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_memories_scope_created ON memories(workspace_id, codebase_id, created_at DESC)`)
-	if err != nil {
-		return fmt.Errorf("create index idx_memories_scope_created: %w", err)
-	}
-
-	return nil
+// migrateDropMemoriesTable drops legacy memories table if present.
+func migrateDropMemoriesTable(ctx context.Context, db *sql.DB) error {
+	_, err := db.ExecContext(ctx, `DROP TABLE IF EXISTS memories`)
+	return err
 }
 
 // migrateIndexedFilesStatus adds the index_status and status_reason columns to the

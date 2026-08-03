@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"slices"
 	"sort"
 	"strings"
@@ -19,7 +20,6 @@ import (
 func newSearchCmd(ctx context.Context) *cobra.Command {
 	var query string
 	var codebaseID int64
-	var source string
 	var limit int
 
 	cmd := &cobra.Command{
@@ -29,11 +29,8 @@ func newSearchCmd(ctx context.Context) *cobra.Command {
 			if strings.TrimSpace(query) == "" {
 				return errors.New("--query is required")
 			}
-			if source != "memories" && source != "chunks" && source != "both" {
-				return errors.New("--source must be one of memories|chunks|both")
-			}
-			if (source == "chunks" || source == "both") && codebaseID <= 0 {
-				return errors.New("--codebase-id is required when source includes chunks")
+			if codebaseID <= 0 {
+				return errors.New("--codebase-id is required")
 			}
 
 			conn, err := db.Open(ctx, rootCfg)
@@ -42,111 +39,84 @@ func newSearchCmd(ctx context.Context) *cobra.Command {
 			}
 			defer conn.Close()
 
-			return runSearch(ctx, conn, query, source, codebaseID, limit)
+			return runSearch(ctx, conn, query, codebaseID, limit)
 		},
 	}
 
 	cmd.Flags().StringVar(&query, "query", "", "Search query")
 	cmd.Flags().Int64Var(&codebaseID, "codebase-id", 0, "Codebase ID to search")
-	cmd.Flags().StringVar(&source, "source", "chunks", "Source to search: memories|chunks|both")
 	cmd.Flags().IntVar(&limit, "limit", 20, "Maximum number of results")
 
 	return cmd
 }
 
-func runSearch(ctx context.Context, conn *sql.DB, query, source string, codebaseID int64, limit int) error {
+func runSearch(ctx context.Context, conn *sql.DB, query string, codebaseID int64, limit int) error {
 	hits := make([]map[string]any, 0)
 	var warning string
+	usedFallback := false
 
-	if source == "memories" || source == "both" {
-		memRepo := store.NewMemoryRepo(conn)
-		memHits, err := memRepo.SearchLexical(ctx, query, "", limit, 0, codebaseID)
+	fts, ftsErr := search.NewFTS5Search(conn, nil)
+	if ftsErr == nil {
+		if err := fts.EnsureIndex(ctx); err != nil {
+			ftsErr = err
+		}
+	}
+
+	if ftsErr == nil && fts.IsAvailable(ctx) {
+		ftsResults, err := fts.SearchLexical(ctx, query, codebaseID, limit)
+		if err != nil {
+			ftsErr = err
+		} else {
+			for _, r := range ftsResults {
+				hits = append(hits, map[string]any{
+					"source":      "chunk",
+					"id":          r.ChunkID,
+					"file_path":   r.FilePath,
+					"name":        r.Name,
+					"kind":        r.Kind,
+					"start_line":  r.StartLine,
+					"end_line":    r.EndLine,
+					"snippet":     r.Snippet,
+					"codebase_id": codebaseID,
+					"bm25_score":  r.BM25Score,
+				})
+			}
+		}
+	}
+
+	if ftsErr != nil {
+		usedFallback = true
+		warning = fmt.Sprintf("FTS5 search failed, falling back to in-memory scan: %v", ftsErr)
+		chunkRepo := store.NewChunkRepo(conn)
+		chunks, err := chunkRepo.GetByCodebase(ctx, codebaseID)
 		if err != nil {
 			return err
 		}
-		for _, m := range memHits {
-			hits = append(hits, map[string]any{
-				"source":   "memory",
-				"id":       m.ID,
-				"content":  m.Content,
-				"category": m.Category,
-			})
-		}
-	}
-
-	if source == "chunks" || source == "both" {
-		usedFallback := false
-
-		fts, ftsErr := search.NewFTS5Search(conn, nil)
-		if ftsErr == nil {
-			if err := fts.EnsureIndex(ctx); err != nil {
-				ftsErr = err
+		queryLower := strings.ToLower(query)
+		for _, c := range chunks {
+			if strings.Contains(strings.ToLower(c.Snippet), queryLower) || strings.Contains(strings.ToLower(c.Name), queryLower) {
+				hits = append(hits, map[string]any{
+					"source":      "chunk",
+					"id":          c.ID,
+					"file_path":   c.FilePath,
+					"name":        c.Name,
+					"kind":        c.Kind,
+					"start_line":  c.StartLine,
+					"end_line":    c.EndLine,
+					"snippet":     c.Snippet,
+					"codebase_id": codebaseID,
+				})
 			}
 		}
-
-		if ftsErr == nil && fts.IsAvailable(ctx) {
-			ftsResults, err := fts.SearchLexical(ctx, query, codebaseID, limit)
-			if err != nil {
-				ftsErr = err
-			} else {
-				for _, r := range ftsResults {
-					hits = append(hits, map[string]any{
-						"source":      "chunk",
-						"id":          r.ChunkID,
-						"file_path":   r.FilePath,
-						"name":        r.Name,
-						"kind":        r.Kind,
-						"start_line":  r.StartLine,
-						"end_line":    r.EndLine,
-						"snippet":     r.Snippet,
-						"codebase_id": codebaseID,
-						"bm25_score":  r.BM25Score,
-					})
-				}
-			}
-		}
-
-		if ftsErr != nil {
-			usedFallback = true
-			warning = "FTS5 index unavailable; using in-memory fallback"
-			chunkRepo := store.NewChunkRepo(conn)
-			chunks, err := chunkRepo.GetByCodebase(ctx, codebaseID)
-			if err != nil {
-				return err
-			}
-			queryLower := strings.ToLower(query)
-			for _, c := range chunks {
-				if strings.Contains(strings.ToLower(c.Snippet), queryLower) ||
-					strings.Contains(strings.ToLower(c.Name), queryLower) {
-					hits = append(hits, map[string]any{
-						"source":      "chunk",
-						"id":          c.ID,
-						"codebase_id": c.CodebaseID,
-						"file_path":   c.FilePath,
-						"name":        c.Name,
-						"kind":        c.Kind,
-						"start_line":  c.StartLine,
-						"end_line":    c.EndLine,
-						"snippet":     c.Snippet,
-					})
-				}
-			}
-		}
-
-		_ = usedFallback
-	}
-
-	if limit > 0 && len(hits) > limit {
-		hits = hits[:limit]
 	}
 
 	result := map[string]any{
-		"query":   query,
-		"source":  source,
-		"count":   len(hits),
-		"results": hits,
+		"query":       query,
+		"codebase_id": codebaseID,
+		"count":       len(hits),
+		"results":     hits,
 	}
-	if warning != "" {
+	if usedFallback {
 		result["warning"] = warning
 	}
 

@@ -213,24 +213,6 @@ func TestMigrateSchema_FTS5AndNewColumns(t *testing.T) {
 		t.Error("status_reason column not found on indexed_files table")
 	}
 
-	// Verify workspace_id column exists on memories
-	exists, err = columnExists(ctx, database, "memories", "workspace_id")
-	if err != nil {
-		t.Fatalf("check workspace_id: %v", err)
-	}
-	if !exists {
-		t.Error("workspace_id column not found on memories table")
-	}
-
-	// Verify codebase_id column exists on memories
-	exists, err = columnExists(ctx, database, "memories", "codebase_id")
-	if err != nil {
-		t.Fatalf("check codebase_id: %v", err)
-	}
-	if !exists {
-		t.Error("codebase_id column not found on memories table")
-	}
-
 	// Check if FTS5 is available in this build
 	fts5Available := true
 	_, err = database.ExecContext(ctx, `SELECT * FROM chunks_fts LIMIT 0`)
@@ -279,7 +261,6 @@ func TestTableInfoPragma_Allowlist(t *testing.T) {
 		{table: "chunks", wantQuery: "PRAGMA table_info(chunks)", wantErr: false},
 		{table: "indexed_files", wantQuery: "PRAGMA table_info(indexed_files)", wantErr: false},
 		{table: "edges", wantQuery: "PRAGMA table_info(edges)", wantErr: false},
-		{table: "memories", wantQuery: "PRAGMA table_info(memories)", wantErr: false},
 		{table: "codebases", wantErr: true},
 	}
 

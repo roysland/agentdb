@@ -16,7 +16,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
 	"github.com/roysland/agentdb/internal/config"
@@ -235,82 +234,18 @@ func mcpTools() []map[string]any {
 	tools := []map[string]any{
 		{
 			"name":        "search",
-			"description": "Searches indexed code chunks and stored memories using BM25 lexical ranking. Returns ranked structured results with file paths and line numbers. Requires: query. Optional: codebase_id, source (memories/chunks/both), limit.",
+			"description": "Searches indexed code chunks using BM25 lexical ranking. Returns ranked structured results with file paths and line numbers. Requires: query, codebase_id. Optional: limit.",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"query":        map[string]any{"type": "string"},
-					"source":       map[string]any{"type": "string", "enum": []string{"memories", "chunks", "both"}},
-					"mode":         map[string]any{"type": "string", "enum": []string{"lexical"}},
-					"category":     map[string]any{"type": "string"},
-					"workspace_id": map[string]any{"type": "integer", "description": "Optional memory scope for workspace-bound memories"},
-					"codebase_id":  map[string]any{"type": "integer"},
-					"limit":        map[string]any{"type": "integer"},
-				},
-				"required": []string{"query"},
-			},
-		},
-		{
-			"name":        "register_codebase",
-			"description": "Registers a repository path and returns its codebase_id, required by all scoped tools. Run once per repository before indexing or analyzing. Requires: path. Optional: name.",
-			"inputSchema": map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"path": map[string]any{"type": "string"},
-					"name": map[string]any{"type": "string"},
-				},
-				"required": []string{"path"},
-			},
-		},
-		{
-			"name":        "list_codebases",
-			"description": "Returns all registered codebase IDs, names, and paths as structured data. Use to resolve a codebase_id. Requires: none.",
-			"inputSchema": map[string]any{"type": "object"},
-		},
-		{
-			"name":        "index_codebase",
-			"description": "Builds or refreshes the chunk retrieval index used by search. Run once after code changes; use incremental=true for updates. Requires: codebase_id, codebase_path.",
-			"inputSchema": map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"codebase_id":     map[string]any{"type": "integer"},
-					"codebase_path":   map[string]any{"type": "string"},
-					"lines_per_chunk": map[string]any{"type": "integer"},
-					"incremental":     map[string]any{"type": "boolean", "description": "Only re-index changed files (uses stored file hashes)"},
-				},
-				"required": []string{"codebase_id", "codebase_path"},
-			},
-		},
-		{
-			"name":        "index_status",
-			"description": "Returns the chunk index readiness status for a codebase as structured data. Requires: codebase_id.",
-			"inputSchema": map[string]any{
-				"type": "object",
-				"properties": map[string]any{
+					"query":       map[string]any{"type": "string"},
+					"mode":        map[string]any{"type": "string", "enum": []string{"lexical"}},
 					"codebase_id": map[string]any{"type": "integer"},
+					"limit":       map[string]any{"type": "integer"},
 				},
-				"required": []string{"codebase_id"},
+				"required": []string{"query", "codebase_id"},
 			},
 		},
-		// Commented out: memory_upsert remains in the schema but not exposed as an MCP tool.
-		// The underlying storage exists for future real-world use cases (e.g. annotating vendor artifacts).
-		// Uncomment when the workflow is concrete and complete design exists.
-		// {
-		// 	"name":        "memory_upsert",
-		// 	"description": "Use when: persisting confirmed memory facts for future retrieval. Requires: content and category. Avoid when: data is speculative or purely transient.",
-		// 	"inputSchema": map[string]any{
-		// 		"type": "object",
-		// 		"properties": map[string]any{
-		// 			"id":           map[string]any{"type": "string"},
-		// 			"content":      map[string]any{"type": "string"},
-		// 			"category":     map[string]any{"type": "string"},
-		// 			"workspace_id": map[string]any{"type": "integer"},
-		// 			"codebase_id":  map[string]any{"type": "integer"},
-		// 			"source_task":  map[string]any{"type": "string"},
-		// 		},
-		// 		"required": []string{"content", "category"},
-		// 	},
-		// },
 		{
 			"name":        "analyze_codebase",
 			"description": "Builds the symbol and call-graph index that powers find_symbol, get_callers, get_callees, find_usages, and get_imports. Run once before using graph navigation tools; use incremental=true for updates. Requires: codebase_id, codebase_path.",
@@ -902,122 +837,73 @@ func mcpSearch(ctx context.Context, conn *sql.DB, args map[string]any) (map[stri
 		return nil, errors.New("query is required")
 	}
 
-	source := strings.ToLower(strings.TrimSpace(toString(args["source"])))
-	if source == "" {
-		source = "both"
-	}
-	if source != "memories" && source != "chunks" && source != "both" {
-		return nil, errors.New("source must be one of memories|chunks|both")
-	}
-
-	category := strings.TrimSpace(toString(args["category"]))
-	workspaceID := toInt64(args["workspace_id"], 0)
 	codebaseID := toInt64(args["codebase_id"], 0)
-	limit := toInt(args["limit"], 20)
-
-	if (source == "chunks" || source == "both") && codebaseID <= 0 {
-		return nil, errors.New("codebase_id is required when source includes chunks")
+	if codebaseID <= 0 {
+		return nil, errors.New("codebase_id is required")
 	}
+
+	workspaceID := toInt64(args["workspace_id"], 0)
+	limit := toInt(args["limit"], 20)
 
 	hits := make([]map[string]any, 0)
 	var warning string
+	usedLikeFallback := false
 
-	if source == "memories" || source == "both" {
-		memoryRepo := store.NewMemoryRepo(conn)
-		lexicalMem, err := memoryRepo.SearchLexical(ctx, query, category, limit, workspaceID, codebaseID)
+	// Try FTS5 search first if available
+	ftsAvailable := mcpFTS5 != nil && mcpFTS5.IsAvailable(ctx)
+
+	if ftsAvailable {
+		ftsResults, err := mcpFTS5.SearchLexical(ctx, query, codebaseID, limit)
 		if err != nil {
-			return nil, err
-		}
-		for _, m := range lexicalMem {
-			hits = append(hits, map[string]any{"source": "memory", "id": m.ID, "content": m.Content, "category": m.Category, "created_at": m.CreatedAt})
+			// FTS5 query failed, fall back to in-memory scan
+			ftsAvailable = false
+		} else {
+			for _, r := range ftsResults {
+				hit := map[string]any{
+					"source":      "chunk",
+					"id":          r.ChunkID,
+					"file_path":   r.FilePath,
+					"name":        r.Name,
+					"kind":        r.Kind,
+					"start_line":  r.StartLine,
+					"end_line":    r.EndLine,
+					"snippet":     r.Snippet,
+					"codebase_id": codebaseID,
+					"bm25_score":  r.BM25Score,
+				}
+				hits = append(hits, compactMCPSearchHit(hit))
+			}
 		}
 	}
 
-	usedLikeFallback := false
+	// Fallback to in-memory scan when FTS5 is not available or failed
+	if !ftsAvailable {
+		usedLikeFallback = true
+		chunkRepo := store.NewChunkRepo(conn)
+		chunks, err := chunkRepo.GetByCodebase(ctx, codebaseID)
+		if err != nil {
+			return nil, err
+		}
 
-	if source == "chunks" || source == "both" {
-		// Try FTS5 search first if available
-		ftsAvailable := mcpFTS5 != nil && mcpFTS5.IsAvailable(ctx)
-
-		if ftsAvailable {
-			ftsResults, err := mcpFTS5.SearchLexical(ctx, query, codebaseID, limit)
-			if err != nil {
-				// FTS5 query failed, fall back to in-memory scan
-				ftsAvailable = false
-			} else {
-				for _, r := range ftsResults {
-					hit := map[string]any{
-						"source":      "chunk",
-						"id":          r.ChunkID,
-						"file_path":   r.FilePath,
-						"name":        r.Name,
-						"kind":        r.Kind,
-						"start_line":  r.StartLine,
-						"end_line":    r.EndLine,
-						"snippet":     r.Snippet,
-						"codebase_id": codebaseID,
-						"bm25_score":  r.BM25Score,
-					}
-					hits = append(hits, compactMCPSearchHit(hit))
-				}
+		queryLower := strings.ToLower(query)
+		for _, c := range chunks {
+			s := strings.ToLower(c.Snippet)
+			if strings.Contains(s, queryLower) || strings.Contains(strings.ToLower(c.Name), queryLower) {
+				hits = append(hits, compactMCPSearchHit(map[string]any{"source": "chunk", "id": c.ID, "codebase_id": c.CodebaseID, "file_path": c.FilePath, "name": c.Name, "kind": c.Kind, "start_line": c.StartLine, "end_line": c.EndLine, "snippet": c.Snippet}))
 			}
 		}
 
-		// Fallback to in-memory scan when FTS5 is not available or failed
-		if !ftsAvailable {
-			usedLikeFallback = true
-			chunkRepo := store.NewChunkRepo(conn)
-			chunks, err := chunkRepo.GetByCodebase(ctx, codebaseID)
-			if err != nil {
-				return nil, err
-			}
-
-			queryLower := strings.ToLower(query)
-			for _, c := range chunks {
-				s := strings.ToLower(c.Snippet)
-				if strings.Contains(s, queryLower) || strings.Contains(strings.ToLower(c.Name), queryLower) {
-					hits = append(hits, compactMCPSearchHit(map[string]any{"source": "chunk", "id": c.ID, "codebase_id": c.CodebaseID, "file_path": c.FilePath, "name": c.Name, "kind": c.Kind, "start_line": c.StartLine, "end_line": c.EndLine, "snippet": c.Snippet}))
-				}
-			}
-
-			warning = "FTS5 index unavailable; using in-memory fallback"
-		}
+		warning = "FTS5 index unavailable; using in-memory fallback"
 	}
 
 	if len(hits) > limit && limit > 0 {
 		hits = hits[:limit]
 	}
 
-	// Track retrieval stats for returned memory hits.
-	if source == "memories" || source == "both" {
-		memoryRepo := store.NewMemoryRepo(conn)
-		now := time.Now().Unix()
-		memoryIDs := make([]string, 0, len(hits))
-		for _, hit := range hits {
-			src, ok := hit["source"].(string)
-			if !ok || src != "memory" {
-				continue
-			}
-			id, ok := hit["id"].(string)
-			if !ok || strings.TrimSpace(id) == "" {
-				continue
-			}
-			memoryIDs = append(memoryIDs, id)
-		}
-		if err := memoryRepo.MarkRetrievedMany(ctx, memoryIDs, now); err != nil {
-			if warning == "" {
-				warning = "failed to update retrieval stats for memory hits"
-			}
-		}
-	}
-
 	// Annotate results from degraded files with metadata.
-	if source == "chunks" || source == "both" {
-		annotateDegradedHits(ctx, conn, codebaseID, hits)
-	}
+	annotateDegradedHits(ctx, conn, codebaseID, hits)
 
 	result := map[string]any{
-		"source":    source,
 		"mode_used": "lexical",
 		"results":   hits,
 	}
@@ -1026,9 +912,6 @@ func mcpSearch(ctx context.Context, conn *sql.DB, args map[string]any) (map[stri
 	}
 	if workspaceID > 0 {
 		result["workspace_id"] = workspaceID
-	}
-	if codebaseID > 0 && (source == "memories" || source == "both") {
-		result["memory_codebase_scope"] = codebaseID
 	}
 	if warning != "" {
 		result["warning"] = warning
@@ -1263,61 +1146,7 @@ func mcpIndexStatus(ctx context.Context, conn *sql.DB, args map[string]any) (map
 	}), nil
 }
 
-func mcpMemoryUpsert(ctx context.Context, conn *sql.DB, args map[string]any) (map[string]any, error) {
-	repo := store.NewMemoryRepo(conn)
-	id := strings.TrimSpace(toString(args["id"]))
-	content := strings.TrimSpace(toString(args["content"]))
-	category := strings.TrimSpace(toString(args["category"]))
-	sourceTask := strings.TrimSpace(toString(args["source_task"]))
-	workspaceID := toInt64(args["workspace_id"], 0)
-	codebaseID := toInt64(args["codebase_id"], 0)
-	if content == "" || category == "" {
-		return nil, errors.New("content and category are required")
-	}
-	if workspaceID < 0 || codebaseID < 0 {
-		return nil, errors.New("workspace_id and codebase_id must be positive integers")
-	}
-	if id == "" {
-		id = uuid.NewString()
-	}
 
-	createdAt := time.Now().Unix()
-	var sourceTaskVal any
-	if sourceTask != "" {
-		sourceTaskVal = sourceTask
-	}
-
-	var workspaceVal any
-	if workspaceID > 0 {
-		workspaceVal = workspaceID
-	}
-
-	var codebaseVal any
-	if codebaseID > 0 {
-		codebaseVal = codebaseID
-	}
-
-	if _, err := conn.ExecContext(ctx, `
-		INSERT INTO memories (id, content, category, workspace_id, codebase_id, created_at, source_task)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET
-			content = excluded.content,
-			category = excluded.category,
-			workspace_id = excluded.workspace_id,
-			codebase_id = excluded.codebase_id,
-			source_task = excluded.source_task`,
-		id, content, category, workspaceVal, codebaseVal, createdAt, sourceTaskVal,
-	); err != nil {
-		return nil, fmt.Errorf("upsert memory: %w", err)
-	}
-
-	item, err := repo.GetByID(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-
-	return mcpToolTextResult(map[string]any{"operation": "upsert", "memory": item}), nil
-}
 
 // annotateDegradedHits looks up the index_status for all unique file paths in the
 // result hits and annotates any hit from a degraded file (text_fallback or partial)

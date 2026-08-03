@@ -16,8 +16,6 @@
 - **Hybrid search** — FTS5 candidate retrieval re-ranked by cosine similarity against embedding vectors
 - **Semantic search** — Natural language queries mapped to candidate symbols via vector similarity
 - **Blast radius analysis** — For any symbol, shows callers, callees, and file-level dependents
-- **Memory search** — Lexical and vector search across agent long-term memories
-- **Scoped memory search** — Optional `workspace_id` and `codebase_id` filters keep memory retrieval bound to the right project/workspace
 
 ## Cross-Repository
 

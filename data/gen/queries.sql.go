@@ -7,7 +7,6 @@ package db
 
 import (
 	"context"
-	"database/sql"
 )
 
 const createChunk = `-- name: CreateChunk :exec
@@ -59,34 +58,6 @@ func (q *Queries) CreateChunk(ctx context.Context, arg CreateChunkParams) error 
 	return err
 }
 
-const createMemory = `-- name: CreateMemory :exec
-INSERT INTO memories (id, content, category, workspace_id, codebase_id, created_at, source_task)
-VALUES (?, ?, ?, ?, ?, ?, ?)
-`
-
-type CreateMemoryParams struct {
-	ID          string
-	Content     string
-	Category    string
-	WorkspaceID sql.NullInt64
-	CodebaseID  sql.NullInt64
-	CreatedAt   int64
-	SourceTask  sql.NullString
-}
-
-func (q *Queries) CreateMemory(ctx context.Context, arg CreateMemoryParams) error {
-	_, err := q.db.ExecContext(ctx, createMemory,
-		arg.ID,
-		arg.Content,
-		arg.Category,
-		arg.WorkspaceID,
-		arg.CodebaseID,
-		arg.CreatedAt,
-		arg.SourceTask,
-	)
-	return err
-}
-
 const deleteChunksByCodebase = `-- name: DeleteChunksByCodebase :exec
 DELETE FROM chunks WHERE codebase_id = ?
 `
@@ -94,18 +65,6 @@ DELETE FROM chunks WHERE codebase_id = ?
 func (q *Queries) DeleteChunksByCodebase(ctx context.Context, codebaseID int64) error {
 	_, err := q.db.ExecContext(ctx, deleteChunksByCodebase, codebaseID)
 	return err
-}
-
-const deleteMemoryByID = `-- name: DeleteMemoryByID :execrows
-DELETE FROM memories WHERE id = ?
-`
-
-func (q *Queries) DeleteMemoryByID(ctx context.Context, id string) (int64, error) {
-	result, err := q.db.ExecContext(ctx, deleteMemoryByID, id)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
 }
 
 const getChunksByCodebase = `-- name: GetChunksByCodebase :many
@@ -152,29 +111,6 @@ func (q *Queries) GetChunksByCodebase(ctx context.Context, codebaseID int64) ([]
 	return items, nil
 }
 
-const getMemoryByID = `-- name: GetMemoryByID :one
-SELECT id, content, category, workspace_id, codebase_id, created_at, last_retrieved, retrieval_count, source_task
-FROM memories
-WHERE id = ?
-`
-
-func (q *Queries) GetMemoryByID(ctx context.Context, id string) (Memory, error) {
-	row := q.db.QueryRowContext(ctx, getMemoryByID, id)
-	var i Memory
-	err := row.Scan(
-		&i.ID,
-		&i.Content,
-		&i.Category,
-		&i.WorkspaceID,
-		&i.CodebaseID,
-		&i.CreatedAt,
-		&i.LastRetrieved,
-		&i.RetrievalCount,
-		&i.SourceTask,
-	)
-	return i, err
-}
-
 const listCodebases = `-- name: ListCodebases :many
 SELECT id, root_path, name, indexed_at
 FROM codebases
@@ -209,80 +145,6 @@ func (q *Queries) ListCodebases(ctx context.Context) ([]Codebasis, error) {
 	return items, nil
 }
 
-const listMemoriesFiltered = `-- name: ListMemoriesFiltered :many
-SELECT id, content, category, workspace_id, codebase_id, created_at, last_retrieved, retrieval_count, source_task
-FROM memories
-WHERE (?1 = '' OR category = ?1)
-	AND (?2 IS NULL OR workspace_id = ?2)
-	AND (?3 IS NULL OR codebase_id = ?3)
-ORDER BY created_at DESC
-LIMIT ?4
-`
-
-type ListMemoriesFilteredParams struct {
-	Category    interface{}
-	WorkspaceID interface{}
-	CodebaseID  interface{}
-	Limit       int64
-}
-
-func (q *Queries) ListMemoriesFiltered(ctx context.Context, arg ListMemoriesFilteredParams) ([]Memory, error) {
-	rows, err := q.db.QueryContext(ctx, listMemoriesFiltered,
-		arg.Category,
-		arg.WorkspaceID,
-		arg.CodebaseID,
-		arg.Limit,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []Memory
-	for rows.Next() {
-		var i Memory
-		if err := rows.Scan(
-			&i.ID,
-			&i.Content,
-			&i.Category,
-			&i.WorkspaceID,
-			&i.CodebaseID,
-			&i.CreatedAt,
-			&i.LastRetrieved,
-			&i.RetrievalCount,
-			&i.SourceTask,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const markMemoryRetrieved = `-- name: MarkMemoryRetrieved :execrows
-UPDATE memories
-SET last_retrieved = ?, retrieval_count = retrieval_count + 1
-WHERE id = ?
-`
-
-type MarkMemoryRetrievedParams struct {
-	LastRetrieved sql.NullInt64
-	ID            string
-}
-
-func (q *Queries) MarkMemoryRetrieved(ctx context.Context, arg MarkMemoryRetrievedParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, markMemoryRetrieved, arg.LastRetrieved, arg.ID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
 const registerCodebase = `-- name: RegisterCodebase :execlastid
 INSERT INTO codebases (root_path, name, indexed_at)
 VALUES (?, ?, ?)
@@ -300,94 +162,4 @@ func (q *Queries) RegisterCodebase(ctx context.Context, arg RegisterCodebasePara
 		return 0, err
 	}
 	return result.LastInsertId()
-}
-
-const searchMemoriesLexicalFiltered = `-- name: SearchMemoriesLexicalFiltered :many
-SELECT id, content, category, workspace_id, codebase_id, created_at, last_retrieved, retrieval_count, source_task
-FROM memories
-WHERE (content LIKE ?1 OR category LIKE ?2)
-	AND (?3 = '' OR category = ?3)
-	AND (?4 IS NULL OR workspace_id = ?4)
-	AND (?5 IS NULL OR codebase_id = ?5)
-ORDER BY created_at DESC
-LIMIT ?6
-`
-
-type SearchMemoriesLexicalFilteredParams struct {
-	Content      string
-	CategoryLike string
-	Category     interface{}
-	WorkspaceID  interface{}
-	CodebaseID   interface{}
-	Limit        int64
-}
-
-func (q *Queries) SearchMemoriesLexicalFiltered(ctx context.Context, arg SearchMemoriesLexicalFilteredParams) ([]Memory, error) {
-	rows, err := q.db.QueryContext(ctx, searchMemoriesLexicalFiltered,
-		arg.Content,
-		arg.CategoryLike,
-		arg.Category,
-		arg.WorkspaceID,
-		arg.CodebaseID,
-		arg.Limit,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []Memory
-	for rows.Next() {
-		var i Memory
-		if err := rows.Scan(
-			&i.ID,
-			&i.Content,
-			&i.Category,
-			&i.WorkspaceID,
-			&i.CodebaseID,
-			&i.CreatedAt,
-			&i.LastRetrieved,
-			&i.RetrievalCount,
-			&i.SourceTask,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const updateMemory = `-- name: UpdateMemory :execrows
-UPDATE memories
-SET content = ?, category = ?, workspace_id = ?, codebase_id = ?, source_task = ?
-WHERE id = ?
-`
-
-type UpdateMemoryParams struct {
-	Content     string
-	Category    string
-	WorkspaceID sql.NullInt64
-	CodebaseID  sql.NullInt64
-	SourceTask  sql.NullString
-	ID          string
-}
-
-func (q *Queries) UpdateMemory(ctx context.Context, arg UpdateMemoryParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, updateMemory,
-		arg.Content,
-		arg.Category,
-		arg.WorkspaceID,
-		arg.CodebaseID,
-		arg.SourceTask,
-		arg.ID,
-	)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
 }
