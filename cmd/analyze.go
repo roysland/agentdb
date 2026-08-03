@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -77,9 +78,9 @@ func (ac *analyzeCmd) run(ctx context.Context) error {
 	// Determine if we should do incremental analysis
 	var runErr error
 	if ac.incremental {
-		runErr = ac.runIncremental(ctx, parsers, symbolRepo, edgeRepo, sfRepo, startTime)
+		runErr = ac.runIncremental(ctx, conn, parsers, symbolRepo, edgeRepo, sfRepo, startTime)
 	} else {
-		runErr = ac.runFull(ctx, parsers, symbolRepo, edgeRepo, sfRepo, startTime)
+		runErr = ac.runFull(ctx, conn, parsers, symbolRepo, edgeRepo, sfRepo, startTime)
 	}
 	if runErr != nil {
 		return runErr
@@ -91,7 +92,7 @@ func (ac *analyzeCmd) run(ctx context.Context) error {
 	return nil
 }
 
-func (ac *analyzeCmd) runFull(ctx context.Context, parsers []parse.Parser, symbolRepo *store.SymbolRepo, edgeRepo *store.EdgeRepo, sfRepo *store.SourceFileRepo, startTime time.Time) error {
+func (ac *analyzeCmd) runFull(ctx context.Context, conn *sql.DB, parsers []parse.Parser, symbolRepo *store.SymbolRepo, edgeRepo *store.EdgeRepo, sfRepo *store.SourceFileRepo, startTime time.Time) error {
 	// Clear existing analysis for this codebase
 	if err := symbolRepo.DeleteByCodebase(ctx, ac.codebaseID); err != nil {
 		return fmt.Errorf("clear symbols: %w", err)
@@ -128,6 +129,8 @@ func (ac *analyzeCmd) runFull(ctx context.Context, parsers []parse.Parser, symbo
 		filesPerSecond = float64(totalFiles) / duration.Seconds()
 	}
 
+	_ = store.RecordAnalyzeRunSync(ctx, conn, ac.codebaseID, int64(totalFiles), int64(totalFiles), 0, 0, 0, 0, int64(totalSymbols), int64(totalEdges), durationMs)
+
 	return printJSON(map[string]any{
 		"codebase_id":       ac.codebaseID,
 		"total_files":       totalFiles,
@@ -144,7 +147,7 @@ func (ac *analyzeCmd) runFull(ctx context.Context, parsers []parse.Parser, symbo
 	})
 }
 
-func (ac *analyzeCmd) runIncremental(ctx context.Context, parsers []parse.Parser, symbolRepo *store.SymbolRepo, edgeRepo *store.EdgeRepo, sfRepo *store.SourceFileRepo, startTime time.Time) error {
+func (ac *analyzeCmd) runIncremental(ctx context.Context, conn *sql.DB, parsers []parse.Parser, symbolRepo *store.SymbolRepo, edgeRepo *store.EdgeRepo, sfRepo *store.SourceFileRepo, startTime time.Time) error {
 	// Load stored hashes from source_files table
 	storedHashes, err := sfRepo.GetHashesByCodebase(ctx, ac.codebaseID)
 	if err != nil {
@@ -153,7 +156,7 @@ func (ac *analyzeCmd) runIncremental(ctx context.Context, parsers []parse.Parser
 
 	// If no source_files exist, fall back to full analyze
 	if len(storedHashes) == 0 {
-		return ac.runFull(ctx, parsers, symbolRepo, edgeRepo, sfRepo, startTime)
+		return ac.runFull(ctx, conn, parsers, symbolRepo, edgeRepo, sfRepo, startTime)
 	}
 
 	// Compute delta
@@ -228,6 +231,8 @@ func (ac *analyzeCmd) runIncremental(ctx context.Context, parsers []parse.Parser
 	if durationMs > 0 {
 		filesPerSecond = float64(filesAnalyzed) / duration.Seconds()
 	}
+
+	_ = store.RecordAnalyzeRunSync(ctx, conn, ac.codebaseID, int64(filesAnalyzed), int64(filesAnalyzed), 0, 0, 0, 0, int64(totalSymbols), int64(totalEdges), durationMs)
 
 	return printJSON(map[string]any{
 		"codebase_id":       ac.codebaseID,

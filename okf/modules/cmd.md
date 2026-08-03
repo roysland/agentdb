@@ -1,5 +1,5 @@
 ---
-commit: ca9fc700d18146947f08e753cfc9c793963f987b
+commit: cc77d6b1c1d919b608eb80f7d9faa82f9dba6bc0
 description: 'Codebase knowledge for module: cmd'
 files:
 - cmd/analyze.go
@@ -23,54 +23,35 @@ files:
 - cmd/workspace.go
 tags:
 - module
-timestamp: '2026-06-26'
+timestamp: '2026-08-03'
 title: cmd
 type: Module
 ---
 
-## What it does
+### What it does
+The `cmd` module provides the CLI entry point and MCP (Model Context Protocol) server implementation for `agentdb`. It orchestrates codebase registration, indexing, symbol analysis, and natural-language issue localization by interfacing with the `internal/db`, `internal/store`, and `internal/search` modules.
 
-The `cmd` package defines all CLI subcommands for the `agentdb` binary using Cobra. It exposes commands for bootstrapping the database schema, registering and managing codebases, parsing source into symbols/edges, chunk-based indexing, import/export of portable artifacts, MCP (Model Context Protocol) server mode, and various search/introspection utilities. Each command wires together configuration resolution, database connection lifecycle, and repository/store abstractions from the `internal` packages.
+### Public interface
+The module exposes command-line interfaces via `cobra.Command` and a persistent MCP server via `runMCPServer`.
 
-## Public interface
+*   **`newBootstrapCmd(ctx context.Context) *cobra.Command`**: Initializes the database schema.
+*   **`newAnalyzeCmd(ctx context.Context) *cobra.Command`**: Parses codebases into symbols and relationships.
+*   **`newIndexCmd(ctx context.Context) *cobra.Command`**: Chunks codebases for retrieval-augmented generation.
+*   **`newLocateIssueCmd(ctx context.Context) *cobra.Command`**: Performs impact analysis for issue reports.
+*   **`runMCPServer(ctx context.Context, cfg config.Runtime, in io.Reader, out io.Writer) error`**: Starts the MCP stdio server loop.
 
-- `Execute(ctx context.Context, cfg config.Runtime) error` — Entry point that builds the root Cobra command and dispatches to all subcommands.
-- `newBootstrapCmd(ctx) *cobra.Command` — Schema migration with optional `--new` DB reset.
-- `newCodebaseCmd(ctx) *cobra.Command` — Subcommands `register` and `list`.
-- `newAnalyzeCmd(ctx) *cobra.Command` — Full or incremental symbol/edge extraction (`--codebase-id`, `--codebase-path`, `--incremental`).
-- `newIndexCmd(ctx) *cobra.Command` — Full or incremental chunk indexing (`--lines-per-chunk`, `--incremental`).
-- `newExportCmd(ctx) *cobra.Command` — Export a codebase to a `.agentdb` artifact (`--strip-source`).
-- `newImportCmd(ctx) *cobra.Command` — Import from an artifact path.
-- `newMCPCmd(ctx) *cobra.Command` — Starts a stdio MCP server exposing tools like `search`, `register_codebase`, `index_codebase`, `analyze_codebase`, `list_codebases`, `index_status`.
-- `newLocateIssueCmd(ctx) *cobra.Command` — Natural-language issue-to-codebase impact mapping.
-- `newQueryCmd(ctx) *cobra.Command` — Ad-hoc search across chunks/memories.
-- `newWatchCmd(ctx) *cobra.Command` — Filesystem watch loop triggering re-index/re-analyze.
-- `newMemoryCmd(ctx) *cobra.Command` — CRUD for stored memory entries.
-- `newWorkspaceCmd(ctx) *cobra.Command` — Workspace management (add/remove members).
-- `newProjectPathCmd(ctx) *cobra.Command` — Resolve project paths.
-- `newVersionCmd(ctx) *cobra.Command` — Print version string.
-- `newTargetResolutionCmd(ctx) *cobra.Command` — Resolve codebase targets.
-- `newMCPTestCmd(ctx) *cobra.Command` — MCP integration testing utilities.
-- `newMCPChunkerDefaultCmd(ctx) *cobra.Command` — Default chunker configuration for MCP.
-- `newMCPAnalyzerDefaultCmd(ctx) *cobra.Command` — Default analyzer configuration for MCP.
-- `printJSON(v any) error` — Shared helper that serializes results to stdout as JSON.
+### Key invariants
+*   **Database Schema**: All operations require a bootstrapped database; `mcp.go` enforces this via `EnsureSchema` before accepting requests.
+*   **Codebase Registration**: A codebase must be registered in the `catalog` (via `codebase register` or `register_codebase` tool) before it can be indexed or analyzed.
+*   **JSON-RPC Compliance**: The MCP server must return valid JSON-RPC 2.0 responses, and notifications (requests without an ID) must not elicit a response.
+*   **Resource Cleanup**: Database connections and plugin registries must be closed/shutdown via `defer` to prevent file descriptor leaks or zombie processes.
 
-## Key invariants
+### Non-obvious decisions
+*   **`modernc.org/sqlite` over `mattn/go-sqlite3`**: The project migrated to `modernc.org/sqlite` to likely avoid CGO dependencies, enabling cross-compilation and simpler deployment for an agent-based tool that may run in varied environments.
+*   **`mcpConnHandle` as a global/singleton**: The MCP server uses a persistent `db.ConnectionHandle` rather than opening/closing connections per request. This is necessary because MCP servers are long-lived processes, and frequent re-opening of the database would introduce significant latency and potential locking contention.
+*   **`wrapChunkErr` remediation hint**: The indexer explicitly checks for "UNIQUE constraint failed" errors to suggest a non-incremental re-run. This is a UX-driven approach to handle "stale" index states that occur when an indexing process is interrupted, which would otherwise be opaque to the user.
+*   **Cross-repo link resolution**: The `analyze` command performs a secondary pass to resolve imports against other workspace members. This is done after the primary parse to allow for decoupled analysis of independent codebases that are later joined into a logical workspace.
 
-- Every command that touches a codebase resolves its target through `resolveCodebaseTarget`, which validates the codebase exists (or registers it) before proceeding.
-- Database connections are opened via `db.Open(ctx, resolved)` and deferred `Close()` in every command; the MCP server uses a shared persistent `ConnectionHandle` instead.
-- Incremental modes (`--incremental`) always fall back to full runs when no stored hashes exist — they never error on empty state.
-- All commands output results via `printJSON` to stdout, keeping stderr for diagnostics and warnings.
-- The MCP server mirrors the client's requested `ProtocolVersion` when present, defaulting to `"2024-11-05"`.
-- Cross-repo link resolution in `analyze` only runs when the codebase belongs to a workspace and only resolves against *other* member codebases, never self.
-
-## Non-obvious decisions
-
-- **`wrapChunkErr` appends a remediation hint only on UNIQUE constraint failures** — This is a deliberate UX choice: stale chunks from an interrupted run produce a specific SQLite error, and the hint tells the user to re-run without `--incremental`. Other errors pass through unmodified to avoid noise.
-- **`memory_upsert` is commented out in `mcpTools()`** — The storage layer exists but the MCP tool is intentionally not exposed. The comment notes this is because the workflow isn't concrete yet, not because of a technical limitation.
-- **`mcpServerDescription` explicitly prohibits reconstructing source from results** — This is a license/policy constraint embedded in the MCP protocol handshake, not a technical one. It reflects that indexed content is for navigation only.
-- **`analyze` clears all symbols/edges/source_files for the codebase before a full run** — This is a delete-then-reinsert strategy rather than upsert, chosen because cross-file relationships may change entirely between runs.
-
-## Unclear intent
-
-None. The files `mcp_chunker_default.go` and `mcp_analyzer_default.go` carry `//go:build !treesitter` — they provide the non-tree-sitter implementations of `mcpChunkFile`/`mcpChunkDirectory` and `mcpAnalyzeParseFile` respectively. When the treesitter build tag is active, alternative implementations replace them. These are not Cobra commands; they are build-tag-selected helper functions called from `mcp.go`.
+### Unclear intent
+*   **`mcp_chunker_default.go` and `mcp_analyzer_default.go`**: These files are present in the module list but were not provided in the source code snippet. Their specific role in the MCP toolset versus the standard `internal/parse` or `internal/chunk` logic is ambiguous.
+*   **`mcp_test.go`**: The purpose of this file is unclear; it is unclear if it contains unit tests for the MCP server or if it serves as a mock/harness for testing MCP client interactions.

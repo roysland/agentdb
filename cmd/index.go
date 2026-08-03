@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -71,13 +72,13 @@ func (ic *indexCmd) run(ctx context.Context) error {
 
 	// Determine if we should do incremental indexing
 	if ic.incremental {
-		return ic.runIncremental(ctx, codebaseID, codebasePath, chunkRepo, indexedFileRepo, startTime)
+		return ic.runIncremental(ctx, dbConn, codebaseID, codebasePath, chunkRepo, indexedFileRepo, startTime)
 	}
 
-	return ic.runFull(ctx, codebaseID, codebasePath, chunkRepo, indexedFileRepo, startTime)
+	return ic.runFull(ctx, dbConn, codebaseID, codebasePath, chunkRepo, indexedFileRepo, startTime)
 }
 
-func (ic *indexCmd) runFull(ctx context.Context, codebaseID int64, codebasePath string, chunkRepo *store.ChunkRepo, indexedFileRepo *store.IndexedFileRepo, startTime time.Time) error {
+func (ic *indexCmd) runFull(ctx context.Context, dbConn *sql.DB, codebaseID int64, codebasePath string, chunkRepo *store.ChunkRepo, indexedFileRepo *store.IndexedFileRepo, startTime time.Time) error {
 	// Delete existing chunks for this codebase
 	if err := chunkRepo.DeleteByCodebase(ctx, codebaseID); err != nil {
 		return fmt.Errorf("delete existing chunks: %w", err)
@@ -143,6 +144,8 @@ func (ic *indexCmd) runFull(ctx context.Context, codebaseID int64, codebasePath 
 		filesPerSecond = float64(totalFiles) / duration.Seconds()
 	}
 
+	_ = store.RecordIndexRunSync(ctx, dbConn, codebaseID, int64(totalFiles), int64(totalChunks), 0, durationMs)
+
 	result := map[string]interface{}{
 		"codebase_id":      codebaseID,
 		"codebase_path":    codebasePath,
@@ -161,7 +164,7 @@ func (ic *indexCmd) runFull(ctx context.Context, codebaseID int64, codebasePath 
 	return printJSON(result)
 }
 
-func (ic *indexCmd) runIncremental(ctx context.Context, codebaseID int64, codebasePath string, chunkRepo *store.ChunkRepo, indexedFileRepo *store.IndexedFileRepo, startTime time.Time) error {
+func (ic *indexCmd) runIncremental(ctx context.Context, dbConn *sql.DB, codebaseID int64, codebasePath string, chunkRepo *store.ChunkRepo, indexedFileRepo *store.IndexedFileRepo, startTime time.Time) error {
 	// Load stored hashes from indexed_files table
 	storedHashes, err := indexedFileRepo.GetHashesByCodebase(ctx, codebaseID)
 	if err != nil {
@@ -170,7 +173,7 @@ func (ic *indexCmd) runIncremental(ctx context.Context, codebaseID int64, codeba
 
 	// If no manifest exists, fall back to full index
 	if len(storedHashes) == 0 {
-		return ic.runFull(ctx, codebaseID, codebasePath, chunkRepo, indexedFileRepo, startTime)
+		return ic.runFull(ctx, dbConn, codebaseID, codebasePath, chunkRepo, indexedFileRepo, startTime)
 	}
 
 	// Compute delta
@@ -257,6 +260,8 @@ func (ic *indexCmd) runIncremental(ctx context.Context, codebaseID int64, codeba
 	if durationMs > 0 {
 		filesPerSecond = float64(filesIndexed) / duration.Seconds()
 	}
+
+	_ = store.RecordIndexRunSync(ctx, dbConn, codebaseID, int64(filesIndexed), int64(totalChunks), 0, durationMs)
 
 	result := map[string]interface{}{
 		"codebase_id":      codebaseID,

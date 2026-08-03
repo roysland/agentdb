@@ -55,6 +55,9 @@ func newRootCmd(ctx context.Context) *cobra.Command {
 	root.AddCommand(newGetImportsCmd(ctx))
 	root.AddCommand(newProjectOverviewCmd(ctx))
 	root.AddCommand(newIndexStatusCmd(ctx))
+	root.AddCommand(newCodebaseContextCmd(ctx))
+	root.AddCommand(newCompareCapabilitiesCmd(ctx))
+	root.AddCommand(newServerStatsCmd(ctx))
 
 	return root
 }

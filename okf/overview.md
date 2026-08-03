@@ -1,49 +1,38 @@
-# AgentDB Project Overview
+### What this project is
+AgentDB is a codebase analysis and retrieval engine designed to power LLM-based development agents. It provides a structured, searchable index of source code, symbols, and call graphs, enabling agents to perform semantic search, issue localization, and cross-repository impact analysis. It is intended for developers building AI-assisted coding tools that require deep, context-aware understanding of large, multi-repo projects.
 
-## What this project is  
-AgentDB is a codebase indexing and analysis platform that extracts semantic structure (symbols, imports, call edges) from source code, chunks files for retrieval-augmented generation (RAG), and enables natural-language issue localization across multi-repo workspaces. It is used by developers and internal tooling to power intelligent code navigation, impact analysis, and context-aware LLM interactions. Its core value lies in transforming unstructured repositories into a structured, queryable knowledge graph while supporting incremental updates, cross-repo symbol resolution, and artifact-based portability.
+### Architecture
+The system follows a layered architecture centered around a SQLite database:
+*   **Ingestion Layer:** The `cmd` and `parse` modules extract semantic data (symbols, edges, chunks) from source code, utilizing tree-sitter or Go AST parsers.
+*   **Storage Layer:** The `store` and `data/gen` modules provide a type-safe, transactional interface to SQLite, managing codebases, chunks, and cross-repo relationships.
+*   **Retrieval Layer:** The `search`, `orient`, and `orient` modules perform FTS5-backed lexical search and heuristic-based issue localization.
+*   **Control Flow:** The CLI (`cmd`) acts as the primary orchestrator, managing database lifecycles, triggering incremental indexing, and exposing functionality via an MCP (Model Context Protocol) server for external agent consumption.
 
-## Architecture  
-The system follows a layered architecture:  
-- **CLI layer** (`cmd`) exposes commands and an MCP server, orchestrating high-level workflows (bootstrap, analyze, index, import/export).  
-- **Storage layer** (`internal/db`, `data/gen`) manages SQLite with WAL mode, schema migrations, and a typed query interface.  
-- **Analysis layer** (`internal/parse`, `internal/chunk`, `internal/index`) parses source code, chunks it for indexing, and maintains incremental deltas via file hashing.  
-- **Search & retrieval layer** (`internal/search`, `internal/orient`) performs lexical and semantic search, classifies documentation, and computes blast radius for issue localization.  
-- **Configuration & observability** (`internal/config`, `internal/observe`) handle runtime settings and structured logging/metrics.  
-- **Artifact layer** (`internal/artifact`) enables export/import of analysis data as self-contained SQLite files.  
-Control flows from CLI commands → config resolution → database access → parsing/chunking → indexing/search. Data flows from source files → AST/parse trees → symbols/edges → chunks → FTS5 index, with bidirectional sync between disk and database.
+### Module map
+*   `cmd`: CLI entry point, subcommands, and MCP server implementation.
+*   `data/gen`: sqlc-generated type-safe database access layer.
+*   `internal/artifact`: SQLite-based import/export of codebase analysis data.
+*   `internal/chunk`: Strategies for splitting source code into indexed units (AST-aware or text-based).
+*   `internal/config`: Configuration resolution from environment, files, and defaults.
+*   `internal/db`: Database connection management, schema bootstrapping, and migration handling.
+*   `internal/filefilter`: Path-based filtering and `.gitignore` integration for traversal.
+*   `internal/index`: Incremental indexing logic and file-hash delta computation.
+*   `internal/observe`: Structured logging and in-memory metrics collection.
+*   `internal/orient`: Documentation classification and retrieval for agent context.
+*   `internal/parse`: Semantic extraction (symbols/edges) using AST parsers and plugin support.
+*   `internal/search`: FTS5 lexical search and symbol-level issue localization.
+*   `internal/store`: Repository-pattern abstractions for database entities.
 
-## Module map  
-- `.claude/worktrees/.../cmd` — CLI command layer (cobra + MCP server)  
-- `.claude/worktrees/.../data/gen` — sqlc-generated database access layer  
-- `.claude/worktrees/.../internal/artifact` — export/import of analysis data as SQLite files  
-- `.claude/worktrees/.../internal/chunk` — file chunking strategies (AST-aware, fixed-line, token-boundary)  
-- `.claude/worktrees/.../internal/config` — configuration resolution (TOML + env vars)  
-- `.claude/worktrees/.../internal/db` — SQLite lifecycle, connection pooling, write serialization  
-- `.claude/worktrees/.../internal/filefilter` — path filtering (built-in + `.gitignore` rules)  
-- `.claude/worktrees/.../internal/index` — incremental indexing via file hash comparison  
-- `.claude/worktrees/.../internal/observe` — structured logging and metrics collection  
-- `.claude/worktrees/.../internal/orient` — documentation classification and retrieval  
-- `.claude/worktrees/.../internal/parse` — source code parsing (Go native, tree-sitter optional, plugin extensible)  
-- `.claude/worktrees/.../internal/search` — FTS5 search, issue localization, blast radius analysis  
-- `.claude/worktrees/.../internal/store` — repository abstractions over database tables  
+### Getting started
+1.  **Build:** Run `go build -tags treesitter ./cmd` to compile the CLI with full AST support.
+2.  **Bootstrap:** Initialize the database schema by running `./agentdb bootstrap`.
+3.  **Register:** Add a codebase to the database: `./agentdb codebase register /path/to/your/repo`.
+4.  **Index:** Run the analysis and indexing pipeline: `./agentdb analyze /path/to/your/repo` followed by `./agentdb index`.
+5.  **Serve:** Start the MCP server to connect to your agent: `./agentdb mcp`.
 
-## Getting started  
-1. Build the CLI: `go build ./cmd/agentdb` (requires Go 1.22+; tree-sitter support needs `-tags treesitter` and CGo).  
-2. Initialize the database: `agentdb bootstrap --new` (creates a local SQLite database at `~/.agentdb/agentdb.sqlite`).  
-3. Register and analyze a codebase:  
-   ```bash
-   agentdb codebase register --root /path/to/repo
-   agentdb analyze --codebase-id <id>
-   agentdb index --codebase-id <id>
-   ```  
-4. (Optional) Start the MCP server: `agentdb mcp` for LLM tool integration.
-
-## Key design decisions  
-- **Write serialization via channel semaphore** instead of `sync.Mutex` to enforce timeouts and prevent goroutine leaks (Bug 1.1 fix).  
-- **AST chunker round-trip guarantee**: concatenated snippets reconstruct the original file byte-for-byte, even when gaps (whitespace/comments) are appended to adjacent chunks.  
-- **FTS5 is optional and gracefully degraded**: if SQLite lacks FTS5, lexical search falls back to `LIKE` queries; search layer handles this transparently.  
-- **Plugin-based extensibility**: external parsers are loaded as JSON-RPC subprocesses, prioritized over built-ins, and isolated with timeouts (30s) to prevent hangs.  
-- **Artifact portability via `ATTACH DATABASE`**: export/import copies data cross-database without serialization, but strips source text when `--strip-source` is used (irreversible).  
-- **Precedence chain: input > env (`AGENTDB_*`) > config file (`~/.config/agentdb/config.toml`) > defaults**, with tilde expansion applied only to config-file values.  
-- **Cross-repo symbol resolution is workspace-scoped and self-excluding**: edges between codebases in the same workspace are resolved, but never back to the originating codebase.
+### Key design decisions
+*   **SQLite-Centric Persistence:** The system uses SQLite as the primary data store, leveraging WAL mode for concurrency and `ATTACH DATABASE` for efficient, bulk-copying of codebase artifacts without serialization overhead.
+*   **Incremental Indexing:** The system computes file-hash deltas to ensure that only changed or new files are processed during re-indexing, significantly reducing overhead for large codebases.
+*   **Resilient Parsing:** The AST parser uses a threshold-based error tolerance, falling back to text-based chunking if the tree-sitter parse quality is too low, ensuring the index remains functional even with broken code.
+*   **Plugin-First Extensibility:** The parser registry prioritizes external binary plugins over built-in parsers, allowing users to add support for new languages without modifying the core codebase.
+*   **Heuristic-Driven Localization:** Issue localization uses a combination of FTS5 BM25 scores and hand-tuned confidence bonuses (e.g., favoring runtime entry points like `handlers` over constants) to rank search results for LLM consumption.
