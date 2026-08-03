@@ -1797,9 +1797,17 @@ func mcpFindSymbol(ctx context.Context, conn *sql.DB, args map[string]any) (map[
 			nameMap[m.ID] = m.Name
 		}
 
+		fuzzy := false
 		symbols, err := repo.FindByNameMulti(ctx, codebaseIDs, name)
 		if err != nil {
 			return nil, err
+		}
+		if len(symbols) == 0 {
+			symbols, err = repo.FindByNameFuzzyMulti(ctx, codebaseIDs, name)
+			if err != nil {
+				return nil, err
+			}
+			fuzzy = len(symbols) > 0
 		}
 
 		// Filter by kind if provided.
@@ -1843,7 +1851,11 @@ func mcpFindSymbol(ctx context.Context, conn *sql.DB, args map[string]any) (map[
 			annotateDegradedHits(ctx, conn, cbID, results)
 		}
 
-		return mcpToolTextResult(map[string]any{"symbols": results, "count": len(results), "workspace_id": workspaceID}), nil
+		resp := map[string]any{"symbols": results, "count": len(results), "workspace_id": workspaceID}
+		if fuzzy {
+			resp["fuzzy"] = true
+		}
+		return mcpToolTextResult(resp), nil
 	}
 
 	// Single-codebase query (original behavior).

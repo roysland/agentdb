@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -37,6 +38,74 @@ func (r *SymbolRepo) FindByNameMulti(ctx context.Context, codebaseIDs []int64, n
 	}
 	defer rows.Close()
 	return scanSymbols(rows)
+}
+
+// FindByNameFuzzyMulti searches symbols with typo-tolerant fuzzy matching across multiple codebases.
+func (r *SymbolRepo) FindByNameFuzzyMulti(ctx context.Context, codebaseIDs []int64, name string) ([]Symbol, error) {
+	if len(codebaseIDs) == 0 {
+		return []Symbol{}, nil
+	}
+
+	threshold := fuzzyThreshold(name)
+	minLen := len(name) - threshold - 1
+	if minLen < 1 {
+		minLen = 1
+	}
+	maxLen := len(name) + threshold + 1
+
+	placeholders := buildPlaceholders(len(codebaseIDs))
+	args := idsToArgs(codebaseIDs)
+	args = append(args, minLen, maxLen, minLen, maxLen, fuzzyCandidateLimit)
+
+	query := fmt.Sprintf(`
+		SELECT id, codebase_id, file_path, language, kind, name, qualified_name,
+		       receiver, signature, doc_comment, visibility, body_snippet,
+		       start_line, end_line, file_hash, indexed_at
+		FROM symbols
+		WHERE codebase_id IN (%s)
+		  AND (LENGTH(name) BETWEEN ? AND ? OR LENGTH(qualified_name) BETWEEN ? AND ?)
+		LIMIT ?`, placeholders)
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("find symbols fuzzy multi: %w", err)
+	}
+	defer rows.Close()
+	candidates, err := scanSymbols(rows)
+	if err != nil {
+		return nil, err
+	}
+
+	lowerName := strings.ToLower(name)
+
+	type scoredSymbol struct {
+		symbol   Symbol
+		distance int
+	}
+	var scored []scoredSymbol
+	for _, s := range candidates {
+		dName := levenshtein(lowerName, strings.ToLower(s.Name))
+		dQual := levenshtein(lowerName, strings.ToLower(s.QualifiedName))
+		d := dName
+		if dQual < d {
+			d = dQual
+		}
+		if d <= threshold {
+			scored = append(scored, scoredSymbol{symbol: s, distance: d})
+		}
+	}
+	sort.SliceStable(scored, func(i, j int) bool {
+		return scored[i].distance < scored[j].distance
+	})
+	if len(scored) > fuzzyResultLimit {
+		scored = scored[:fuzzyResultLimit]
+	}
+
+	out := make([]Symbol, len(scored))
+	for i, sc := range scored {
+		out[i] = sc.symbol
+	}
+	return out, nil
 }
 
 // GetCallersMulti returns callers from any of the given codebases.

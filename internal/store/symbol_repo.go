@@ -110,20 +110,26 @@ const fuzzyCandidateLimit = 5000
 // fuzzyResultLimit caps how many near-matches FindByNameFuzzy returns.
 const fuzzyResultLimit = 20
 
-// FindByNameFuzzy returns symbols whose name is within a length-scaled edit
-// distance of the query. Intended as a fallback for FindByName when an exact
-// or substring match returns nothing, e.g. because the caller guessed a
-// close-but-wrong symbol name.
+// FindByNameFuzzy returns symbols whose name or qualified_name is within a
+// length-scaled edit distance of the query. Intended as a fallback for
+// FindByName when an exact or substring match returns nothing.
 func (r *SymbolRepo) FindByNameFuzzy(ctx context.Context, codebaseID int64, name string) ([]Symbol, error) {
+	threshold := fuzzyThreshold(name)
+	minLen := len(name) - threshold - 1
+	if minLen < 1 {
+		minLen = 1
+	}
+	maxLen := len(name) + threshold + 1
+
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, codebase_id, file_path, language, kind, name, qualified_name,
 		       receiver, signature, doc_comment, visibility, body_snippet,
 		       start_line, end_line, file_hash, indexed_at
 		FROM symbols
 		WHERE codebase_id = ?
-		ORDER BY name
+		  AND (LENGTH(name) BETWEEN ? AND ? OR LENGTH(qualified_name) BETWEEN ? AND ?)
 		LIMIT ?`,
-		codebaseID, fuzzyCandidateLimit,
+		codebaseID, minLen, maxLen, minLen, maxLen, fuzzyCandidateLimit,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("find symbols fuzzy: %w", err)
@@ -134,7 +140,6 @@ func (r *SymbolRepo) FindByNameFuzzy(ctx context.Context, codebaseID int64, name
 		return nil, err
 	}
 
-	threshold := fuzzyThreshold(name)
 	lowerName := strings.ToLower(name)
 
 	type scoredSymbol struct {
@@ -143,7 +148,12 @@ func (r *SymbolRepo) FindByNameFuzzy(ctx context.Context, codebaseID int64, name
 	}
 	var scored []scoredSymbol
 	for _, s := range candidates {
-		d := levenshtein(lowerName, strings.ToLower(s.Name))
+		dName := levenshtein(lowerName, strings.ToLower(s.Name))
+		dQual := levenshtein(lowerName, strings.ToLower(s.QualifiedName))
+		d := dName
+		if dQual < d {
+			d = dQual
+		}
 		if d <= threshold {
 			scored = append(scored, scoredSymbol{symbol: s, distance: d})
 		}
