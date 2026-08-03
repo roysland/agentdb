@@ -42,26 +42,26 @@ func RecordToolCallSync(ctx context.Context, db *sql.DB, tool string, durationMs
 // RecordIndexRun persists the outcome of a single index pipeline run asynchronously.
 // Only safe to use from a long-lived process (the MCP server); CLI callers should
 // use RecordIndexRunSync instead.
-func RecordIndexRun(db *sql.DB, codebaseID, files, chunks, embeddingFailures, durationMs int64) {
+func RecordIndexRun(db *sql.DB, codebaseID, files, chunks, durationMs int64) {
 	if db == nil {
 		return
 	}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		_ = RecordIndexRunSync(ctx, db, codebaseID, files, chunks, embeddingFailures, durationMs)
+		_ = RecordIndexRunSync(ctx, db, codebaseID, files, chunks, durationMs)
 	}()
 }
 
 // RecordIndexRunSync persists the outcome of a single index pipeline run synchronously,
 // for callers (CLI commands) that need the write to land before the process exits.
-func RecordIndexRunSync(ctx context.Context, db *sql.DB, codebaseID, files, chunks, embeddingFailures, durationMs int64) error {
+func RecordIndexRunSync(ctx context.Context, db *sql.DB, codebaseID, files, chunks, durationMs int64) error {
 	if db == nil {
 		return nil
 	}
 	_, err := db.ExecContext(ctx,
-		`INSERT INTO metric_index_runs (recorded_at, codebase_id, files_indexed, chunks_indexed, embedding_failures, duration_ms) VALUES (?, ?, ?, ?, ?, ?)`,
-		time.Now().UnixMilli(), codebaseID, files, chunks, embeddingFailures, durationMs,
+		`INSERT INTO metric_index_runs (recorded_at, codebase_id, files_indexed, chunks_indexed, duration_ms) VALUES (?, ?, ?, ?, ?)`,
+		time.Now().UnixMilli(), codebaseID, files, chunks, durationMs,
 	)
 	return err
 }

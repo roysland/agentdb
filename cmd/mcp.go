@@ -14,7 +14,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -232,11 +231,6 @@ func mcpRequestedProtocolVersion(params json.RawMessage) (string, bool) {
 	return v, true
 }
 
-// isExperimentalEnabled checks AGENTDB_EXPERIMENTAL env var.
-func isExperimentalEnabled() bool {
-	return os.Getenv("AGENTDB_EXPERIMENTAL") == "1"
-}
-
 func mcpTools() []map[string]any {
 	tools := []map[string]any{
 		{
@@ -332,7 +326,7 @@ func mcpTools() []map[string]any {
 		},
 		{
 			"name":        "find_symbol",
-			"description": "Returns the exact file path, line range, and signature for any named symbol — function, type, method, or constant — in one deterministic call. No file reading needed. Requires: name. Optional: codebase_id, workspace_id (searches all registered repos), kind.",
+			"description": "Returns the exact file path, line range, and signature for any named symbol — function, type, method, or constant — in one deterministic call. No file reading needed. Matches substrings of the name; if that finds nothing, falls back to typo-tolerant fuzzy matching (response includes fuzzy: true). Requires: name. Optional: codebase_id, workspace_id (searches all registered repos), kind.",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -468,22 +462,6 @@ func mcpTools() []map[string]any {
 			"required": []string{"codebase_a_id", "codebase_b_id"},
 		},
 	})
-
-	if isExperimentalEnabled() {
-		tools = append(tools, map[string]any{
-			"name":        "resolve_code_query",
-			"description": "Orchestrates multiple code-intel primitives into a single structured answer for broad or ambiguous queries. One call replaces a multi-step sequence. Requires: query, codebase_id. Optional: workspace_id.",
-			"inputSchema": map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"query":        map[string]any{"type": "string", "description": "Natural language or symbol name query"},
-					"codebase_id":  map[string]any{"type": "integer", "description": "Target codebase ID"},
-					"workspace_id": map[string]any{"type": "integer", "description": "Optional: search across all codebases in this workspace"},
-				},
-				"required": []string{"query", "codebase_id"},
-			},
-		})
-	}
 
 	return tools
 }
@@ -865,11 +843,6 @@ func handleMCPToolCall(ctx context.Context, rawParams json.RawMessage) (map[stri
 		defer mcpConnHandle.ReleaseWrite()
 		return mcpAnalyzeCodebase(wctx, conn, req.Arguments)
 
-	case "resolve_code_query":
-		rctx, cancel := mcpConnHandle.ReadContext(ctx)
-		defer cancel()
-		return mcpResolveCodeQuery(rctx, conn, req.Arguments)
-
 	case "locate_issue_impact_area":
 		rctx, cancel := mcpConnHandle.ReadContext(ctx)
 		defer cancel()
@@ -1063,7 +1036,6 @@ func mcpIndexCodebase(ctx context.Context, conn *sql.DB, args map[string]any) (m
 		return nil, errors.New("codebase_id and codebase_path are required")
 	}
 	indexStartTime := time.Now()
-	var indexEmbedFailures int64
 
 	chunkRepo := store.NewChunkRepo(conn)
 	indexedFileRepo := store.NewIndexedFileRepo(conn)
@@ -1160,9 +1132,9 @@ func mcpIndexCodebase(ctx context.Context, conn *sql.DB, args map[string]any) (m
 				"incremental":   true,
 			}
 			if mcpMetrics != nil {
-				mcpMetrics.RecordIndexRun(int64(totalFiles), int64(totalChunks), indexEmbedFailures, time.Since(indexStartTime).Milliseconds())
+				mcpMetrics.RecordIndexRun(int64(totalFiles), int64(totalChunks), time.Since(indexStartTime).Milliseconds())
 			}
-			store.RecordIndexRun(conn, codebaseID, int64(totalFiles), int64(totalChunks), indexEmbedFailures, time.Since(indexStartTime).Milliseconds())
+			store.RecordIndexRun(conn, codebaseID, int64(totalFiles), int64(totalChunks), time.Since(indexStartTime).Milliseconds())
 			return mcpToolTextResult(result), nil
 		}
 	}
@@ -1226,9 +1198,9 @@ func mcpIndexCodebase(ctx context.Context, conn *sql.DB, args map[string]any) (m
 		"incremental":   false,
 	}
 	if mcpMetrics != nil {
-		mcpMetrics.RecordIndexRun(int64(len(fileResults)), int64(totalChunks), indexEmbedFailures, time.Since(indexStartTime).Milliseconds())
+		mcpMetrics.RecordIndexRun(int64(len(fileResults)), int64(totalChunks), time.Since(indexStartTime).Milliseconds())
 	}
-	store.RecordIndexRun(conn, codebaseID, int64(len(fileResults)), int64(totalChunks), indexEmbedFailures, time.Since(indexStartTime).Milliseconds())
+	store.RecordIndexRun(conn, codebaseID, int64(len(fileResults)), int64(totalChunks), time.Since(indexStartTime).Milliseconds())
 
 	return mcpToolTextResult(result), nil
 }
@@ -1880,6 +1852,17 @@ func mcpFindSymbol(ctx context.Context, conn *sql.DB, args map[string]any) (map[
 		return nil, err
 	}
 
+	// Fall back to typo-tolerant fuzzy matching when the exact/substring
+	// match found nothing — e.g. the caller guessed a close-but-wrong name.
+	fuzzy := false
+	if len(symbols) == 0 {
+		symbols, err = repo.FindByNameFuzzy(ctx, codebaseID, name)
+		if err != nil {
+			return nil, err
+		}
+		fuzzy = len(symbols) > 0
+	}
+
 	// Filter by kind if provided
 	if kind != "" {
 		filtered := symbols[:0]
@@ -1916,7 +1899,11 @@ func mcpFindSymbol(ctx context.Context, conn *sql.DB, args map[string]any) (map[
 	}
 	annotateDegradedHits(ctx, conn, codebaseID, results)
 
-	return mcpToolTextResult(map[string]any{"symbols": results, "count": len(results)}), nil
+	response := map[string]any{"symbols": results, "count": len(results)}
+	if fuzzy {
+		response["fuzzy"] = true
+	}
+	return mcpToolTextResult(response), nil
 }
 
 func mcpFindUsages(ctx context.Context, conn *sql.DB, args map[string]any) (map[string]any, error) {
@@ -2196,121 +2183,6 @@ func mcpProjectOverview(ctx context.Context, conn *sql.DB, args map[string]any) 
 	}), nil
 }
 
-// mcpResolveCodeQuery orchestrates four sub-queries in parallel (find_symbol,
-// get_callers, get_callees, find_usages) and merges results
-// into a single structured response. Individual sub-query failures are captured
-// as error annotations rather than failing the entire call.
-func mcpResolveCodeQuery(ctx context.Context, conn *sql.DB, args map[string]any) (map[string]any, error) {
-	query := strings.TrimSpace(toString(args["query"]))
-	if query == "" {
-		return nil, errors.New("query is required")
-	}
-
-	codebaseID := toInt64(args["codebase_id"], 0)
-	if codebaseID <= 0 {
-		return nil, errors.New("codebase_id is required")
-	}
-
-	workspaceID := toInt64(args["workspace_id"], 0)
-
-	// Prepare response sections.
-	var (
-		matchedSymbols any
-		callers        any
-		callees        any
-		usages         any
-	)
-
-	errMap := make(map[string]string)
-	var mu sync.Mutex
-
-	// Build sub-query argument maps.
-	findSymbolArgs := map[string]any{"name": query, "codebase_id": codebaseID}
-	findUsagesArgs := map[string]any{"name": query, "codebase_id": codebaseID}
-	getCallersArgs := map[string]any{"name": query, "codebase_id": codebaseID}
-
-	if workspaceID > 0 {
-		findSymbolArgs["workspace_id"] = workspaceID
-		findUsagesArgs["workspace_id"] = workspaceID
-		getCallersArgs["workspace_id"] = workspaceID
-	}
-
-	var wg sync.WaitGroup
-	wg.Add(4)
-
-	// 1. find_symbol
-	go func() {
-		defer wg.Done()
-		result, err := mcpFindSymbol(ctx, conn, findSymbolArgs)
-		mu.Lock()
-		defer mu.Unlock()
-		if err != nil {
-			errMap["find_symbol"] = err.Error()
-			matchedSymbols = []any{}
-		} else {
-			matchedSymbols = extractStructuredField(result, "symbols", []any{})
-		}
-	}()
-
-	// 2. get_callers
-	go func() {
-		defer wg.Done()
-		result, err := mcpGetCallers(ctx, conn, getCallersArgs)
-		mu.Lock()
-		defer mu.Unlock()
-		if err != nil {
-			errMap["callers"] = err.Error()
-			callers = []any{}
-		} else {
-			callers = extractStructuredField(result, "callers", []any{})
-		}
-	}()
-
-	// 3. get_callees — requires codebase_id and qualified_name; use query as qualified_name
-	go func() {
-		defer wg.Done()
-		calleesArgs := map[string]any{"codebase_id": codebaseID, "qualified_name": query}
-		result, err := mcpGetCallees(ctx, conn, calleesArgs)
-		mu.Lock()
-		defer mu.Unlock()
-		if err != nil {
-			errMap["callees"] = err.Error()
-			callees = []any{}
-		} else {
-			callees = extractStructuredField(result, "callees", []any{})
-		}
-	}()
-
-	// 4. find_usages
-	go func() {
-		defer wg.Done()
-		result, err := mcpFindUsages(ctx, conn, findUsagesArgs)
-		mu.Lock()
-		defer mu.Unlock()
-		if err != nil {
-			errMap["usages"] = err.Error()
-			usages = []any{}
-		} else {
-			usages = extractStructuredField(result, "usages", []any{})
-		}
-	}()
-
-	wg.Wait()
-
-	response := map[string]any{
-		"matched_symbols": matchedSymbols,
-		"callers":         callers,
-		"callees":         callees,
-		"usages":          usages,
-	}
-
-	if len(errMap) > 0 {
-		response["errors"] = errMap
-	}
-
-	return mcpToolTextResult(response), nil
-}
-
 // mcpLocateIssueImpactArea handles the locate_issue_impact_area MCP tool call.
 // It performs hybrid search (FTS5 + optional semantic) to rank symbols by issue
 // relevance with blast radius and confidence scores.
@@ -2422,27 +2294,6 @@ func mcpCodebaseContext(ctx context.Context, conn *sql.DB, args map[string]any) 
 	}
 
 	return mcpToolTextResult(response), nil
-}
-
-// extractStructuredField extracts a field from an MCP tool result's structuredContent.
-// Returns fallback if the field is not found or the result structure is unexpected.
-func extractStructuredField(result map[string]any, field string, fallback any) any {
-	if result == nil {
-		return fallback
-	}
-	sc, ok := result["structuredContent"]
-	if !ok {
-		return fallback
-	}
-	scMap, ok := sc.(map[string]any)
-	if !ok {
-		return fallback
-	}
-	val, ok := scMap[field]
-	if !ok {
-		return fallback
-	}
-	return val
 }
 
 func mcpServerStats(ctx context.Context, conn *sql.DB, args map[string]any) (map[string]any, error) {

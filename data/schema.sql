@@ -207,7 +207,6 @@ CREATE TABLE IF NOT EXISTS metric_index_runs (
     codebase_id        INTEGER REFERENCES codebases(id) ON DELETE SET NULL,
     files_indexed      INTEGER NOT NULL DEFAULT 0,
     chunks_indexed     INTEGER NOT NULL DEFAULT 0,
-    embedding_failures INTEGER NOT NULL DEFAULT 0,
     duration_ms        INTEGER NOT NULL DEFAULT 0
 );
 

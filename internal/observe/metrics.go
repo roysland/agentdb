@@ -107,11 +107,10 @@ type ParseStats struct {
 
 // IndexStats tracks indexing pipeline throughput across all runs.
 type IndexStats struct {
-	RunCount          int64
-	FilesIndexed      int64
-	ChunksIndexed     int64
-	EmbeddingFailures int64
-	TotalDurationMs   int64
+	RunCount        int64
+	FilesIndexed    int64
+	ChunksIndexed   int64
+	TotalDurationMs int64
 }
 
 // GraphStats tracks call graph topology accumulated across analyze runs.
@@ -233,13 +232,12 @@ func (m *MetricsCollector) RecordParseResult(status, reason string, symbolCount 
 }
 
 // RecordIndexRun records the outcome of one full or incremental index run.
-func (m *MetricsCollector) RecordIndexRun(files, chunks, embeddingFailures, durationMs int64) {
+func (m *MetricsCollector) RecordIndexRun(files, chunks, durationMs int64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.indexStats.RunCount++
 	m.indexStats.FilesIndexed += files
 	m.indexStats.ChunksIndexed += chunks
-	m.indexStats.EmbeddingFailures += embeddingFailures
 	m.indexStats.TotalDurationMs += durationMs
 }
 
@@ -264,11 +262,10 @@ type ParseSummary struct {
 
 // IndexSummary is the indexing-throughput section of ServerStats.
 type IndexSummary struct {
-	RunCount          int64 `json:"run_count"`
-	FilesIndexed      int64 `json:"files_indexed"`
-	ChunksIndexed     int64 `json:"chunks_indexed"`
-	EmbeddingFailures int64 `json:"embedding_failures"`
-	AvgDurationMs     int64 `json:"avg_duration_ms"`
+	RunCount      int64 `json:"run_count"`
+	FilesIndexed  int64 `json:"files_indexed"`
+	ChunksIndexed int64 `json:"chunks_indexed"`
+	AvgDurationMs int64 `json:"avg_duration_ms"`
 }
 
 // GraphSummary is the call-graph topology section of ServerStats.
@@ -350,10 +347,9 @@ func (m *MetricsCollector) Stats() ServerStats {
 
 	// Index summary
 	indexSummary := IndexSummary{
-		RunCount:          m.indexStats.RunCount,
-		FilesIndexed:      m.indexStats.FilesIndexed,
-		ChunksIndexed:     m.indexStats.ChunksIndexed,
-		EmbeddingFailures: m.indexStats.EmbeddingFailures,
+		RunCount:      m.indexStats.RunCount,
+		FilesIndexed:  m.indexStats.FilesIndexed,
+		ChunksIndexed: m.indexStats.ChunksIndexed,
 	}
 	if m.indexStats.RunCount > 0 {
 		indexSummary.AvgDurationMs = m.indexStats.TotalDurationMs / m.indexStats.RunCount

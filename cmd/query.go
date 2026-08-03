@@ -822,12 +822,12 @@ func buildServerStats(ctx context.Context, conn *sql.DB) (map[string]any, error)
 		}
 	}
 
-	var indexRuns, indexFiles, indexChunks, indexEmbedFailures, indexAvgMs sql.NullInt64
+	var indexRuns, indexFiles, indexChunks, indexAvgMs sql.NullInt64
 	if err := conn.QueryRowContext(ctx, `
 		SELECT COUNT(*), COALESCE(SUM(files_indexed), 0), COALESCE(SUM(chunks_indexed), 0),
-		       COALESCE(SUM(embedding_failures), 0), COALESCE(AVG(duration_ms), 0)
+		       COALESCE(AVG(duration_ms), 0)
 		FROM metric_index_runs`,
-	).Scan(&indexRuns, &indexFiles, &indexChunks, &indexEmbedFailures, &indexAvgMs); err != nil {
+	).Scan(&indexRuns, &indexFiles, &indexChunks, &indexAvgMs); err != nil {
 		return nil, err
 	}
 
@@ -852,11 +852,10 @@ func buildServerStats(ctx context.Context, conn *sql.DB) (map[string]any, error)
 			"by_tool": tools,
 		},
 		"index_runs": map[string]any{
-			"run_count":          indexRuns.Int64,
-			"files_indexed":      indexFiles.Int64,
-			"chunks_indexed":     indexChunks.Int64,
-			"embedding_failures": indexEmbedFailures.Int64,
-			"avg_duration_ms":    indexAvgMs.Int64,
+			"run_count":       indexRuns.Int64,
+			"files_indexed":   indexFiles.Int64,
+			"chunks_indexed":  indexChunks.Int64,
+			"avg_duration_ms": indexAvgMs.Int64,
 		},
 		"analyze_runs": map[string]any{
 			"run_count":       analyzeRuns.Int64,

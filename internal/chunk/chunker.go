@@ -28,7 +28,6 @@ type Chunk struct {
 	StartLine      int64
 	EndLine        int64
 	FileHash       string
-	EmbeddingModel string
 }
 
 // ChunkerConfig contains configuration for the chunking process

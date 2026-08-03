@@ -137,6 +137,31 @@ func MigrateSchema(ctx context.Context, db *sql.DB) error {
 		return fmt.Errorf("migrate metric tables: %w", err)
 	}
 
+	// Migration 13: Drop the vestigial embedding_failures column from
+	// metric_index_runs. Semantic/vector search was dropped in favor of
+	// FTS5, so this column was never populated with real values.
+	if err := migrateDropEmbeddingFailures(ctx, db); err != nil {
+		return fmt.Errorf("migrate drop metric_index_runs.embedding_failures: %w", err)
+	}
+
+	return nil
+}
+
+// migrateDropEmbeddingFailures removes the embedding_failures column from
+// metric_index_runs for databases created before semantic search was dropped.
+func migrateDropEmbeddingFailures(ctx context.Context, db *sql.DB) error {
+	exists, err := columnExists(ctx, db, "metric_index_runs", "embedding_failures")
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return nil
+	}
+
+	_, err = db.ExecContext(ctx, `ALTER TABLE metric_index_runs DROP COLUMN embedding_failures`)
+	if err != nil {
+		return fmt.Errorf("alter table metric_index_runs: %w", err)
+	}
 	return nil
 }
 
@@ -333,6 +358,8 @@ func tableInfoPragma(table string) (string, error) {
 		return "PRAGMA table_info(edges)", nil
 	case "memories":
 		return "PRAGMA table_info(memories)", nil
+	case "metric_index_runs":
+		return "PRAGMA table_info(metric_index_runs)", nil
 	default:
 		return "", fmt.Errorf("unsupported table for PRAGMA table_info: %s", table)
 	}
@@ -524,7 +551,6 @@ func migrateCreateMetricTables(ctx context.Context, db *sql.DB) error {
 			codebase_id        INTEGER REFERENCES codebases(id) ON DELETE SET NULL,
 			files_indexed      INTEGER NOT NULL DEFAULT 0,
 			chunks_indexed     INTEGER NOT NULL DEFAULT 0,
-			embedding_failures INTEGER NOT NULL DEFAULT 0,
 			duration_ms        INTEGER NOT NULL DEFAULT 0
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_metric_index_runs_codebase ON metric_index_runs(codebase_id)`,

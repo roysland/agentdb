@@ -227,8 +227,8 @@ func TestRecordParseResult_Counters(t *testing.T) {
 
 func TestRecordIndexRun(t *testing.T) {
 	mc := NewMetricsCollector()
-	mc.RecordIndexRun(100, 500, 3, 2000)
-	mc.RecordIndexRun(50, 200, 1, 1000)
+	mc.RecordIndexRun(100, 500, 2000)
+	mc.RecordIndexRun(50, 200, 1000)
 
 	stats := mc.Stats()
 	idx := stats.Index
@@ -240,9 +240,6 @@ func TestRecordIndexRun(t *testing.T) {
 	}
 	if idx.ChunksIndexed != 700 {
 		t.Errorf("ChunksIndexed: got %d want 700", idx.ChunksIndexed)
-	}
-	if idx.EmbeddingFailures != 4 {
-		t.Errorf("EmbeddingFailures: got %d want 4", idx.EmbeddingFailures)
 	}
 	if idx.AvgDurationMs != 1500 {
 		t.Errorf("AvgDurationMs: got %d want 1500", idx.AvgDurationMs)
@@ -299,7 +296,7 @@ func TestErrorsLast60s(t *testing.T) {
 func TestReset_ClearsAllStats(t *testing.T) {
 	mc := NewMetricsCollector()
 	mc.RecordParseResult("text_fallback", "", 0)
-	mc.RecordIndexRun(10, 50, 1, 100)
+	mc.RecordIndexRun(10, 50, 100)
 	mc.RecordGraphUpdate(20, 40)
 	mc.Record("tool", 600, true)
 

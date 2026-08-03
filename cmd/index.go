@@ -144,7 +144,7 @@ func (ic *indexCmd) runFull(ctx context.Context, dbConn *sql.DB, codebaseID int6
 		filesPerSecond = float64(totalFiles) / duration.Seconds()
 	}
 
-	_ = store.RecordIndexRunSync(ctx, dbConn, codebaseID, int64(totalFiles), int64(totalChunks), 0, durationMs)
+	_ = store.RecordIndexRunSync(ctx, dbConn, codebaseID, int64(totalFiles), int64(totalChunks), durationMs)
 
 	result := map[string]interface{}{
 		"codebase_id":      codebaseID,
@@ -261,7 +261,7 @@ func (ic *indexCmd) runIncremental(ctx context.Context, dbConn *sql.DB, codebase
 		filesPerSecond = float64(filesIndexed) / duration.Seconds()
 	}
 
-	_ = store.RecordIndexRunSync(ctx, dbConn, codebaseID, int64(filesIndexed), int64(totalChunks), 0, durationMs)
+	_ = store.RecordIndexRunSync(ctx, dbConn, codebaseID, int64(filesIndexed), int64(totalChunks), durationMs)
 
 	result := map[string]interface{}{
 		"codebase_id":      codebaseID,

@@ -20,7 +20,7 @@ func (r *SymbolRepo) FindByNameMulti(ctx context.Context, codebaseIDs []int64, n
 	query := fmt.Sprintf(`
 		SELECT id, codebase_id, file_path, language, kind, name, qualified_name,
 		       receiver, signature, doc_comment, visibility, body_snippet,
-		       start_line, end_line, file_hash, indexed_at, embedding, embedding_model
+		       start_line, end_line, file_hash, indexed_at
 		FROM symbols
 		WHERE codebase_id IN (%s)
 		  AND (name LIKE ? OR qualified_name LIKE ?)

@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sort"
+	"strings"
 )
 
 // Symbol mirrors the symbols table.
@@ -99,6 +101,65 @@ func (r *SymbolRepo) FindByName(ctx context.Context, codebaseID int64, name stri
 	}
 	defer rows.Close()
 	return scanSymbols(rows)
+}
+
+// fuzzyCandidateLimit bounds how many symbol rows FindByNameFuzzy scans per
+// codebase, to keep the edit-distance pass cheap even on large codebases.
+const fuzzyCandidateLimit = 5000
+
+// fuzzyResultLimit caps how many near-matches FindByNameFuzzy returns.
+const fuzzyResultLimit = 20
+
+// FindByNameFuzzy returns symbols whose name is within a length-scaled edit
+// distance of the query. Intended as a fallback for FindByName when an exact
+// or substring match returns nothing, e.g. because the caller guessed a
+// close-but-wrong symbol name.
+func (r *SymbolRepo) FindByNameFuzzy(ctx context.Context, codebaseID int64, name string) ([]Symbol, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, codebase_id, file_path, language, kind, name, qualified_name,
+		       receiver, signature, doc_comment, visibility, body_snippet,
+		       start_line, end_line, file_hash, indexed_at
+		FROM symbols
+		WHERE codebase_id = ?
+		ORDER BY name
+		LIMIT ?`,
+		codebaseID, fuzzyCandidateLimit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("find symbols fuzzy: %w", err)
+	}
+	defer rows.Close()
+	candidates, err := scanSymbols(rows)
+	if err != nil {
+		return nil, err
+	}
+
+	threshold := fuzzyThreshold(name)
+	lowerName := strings.ToLower(name)
+
+	type scoredSymbol struct {
+		symbol   Symbol
+		distance int
+	}
+	var scored []scoredSymbol
+	for _, s := range candidates {
+		d := levenshtein(lowerName, strings.ToLower(s.Name))
+		if d <= threshold {
+			scored = append(scored, scoredSymbol{symbol: s, distance: d})
+		}
+	}
+	sort.SliceStable(scored, func(i, j int) bool {
+		return scored[i].distance < scored[j].distance
+	})
+	if len(scored) > fuzzyResultLimit {
+		scored = scored[:fuzzyResultLimit]
+	}
+
+	out := make([]Symbol, len(scored))
+	for i, sc := range scored {
+		out[i] = sc.symbol
+	}
+	return out, nil
 }
 
 // FindByKind returns all symbols of a given kind in the codebase.
